@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 """
-TODO App - Aplicación de tareas para terminal con grupos
+TODO App - Aplicación de tareas para terminal con grupos y calendario
 Controles:
   a - Añadir tarea
-  e - Editar tarea seleccionada
-  d - Eliminar tarea seleccionada
+  e - Editar tarea (incluye opción de fecha)
+  d - Eliminar tarea
   g - Crear nuevo grupo
-  G - Editar/Eliminar grupo actual
-  ←/→ - Cambiar entre grupos
-  Espacio/Enter - Marcar/desmarcar como completada
+  G - Editar/Eliminar grupo
+  c - Modo calendario
+  ←/→/↑/↓ - Navegar días (calendario) / tareas y grupos (normal)
+  Tab - Cambiar mes (calendario)
+  Enter - Ver tareas del día (calendario)
+  Espacio - Ir al grupo de la tarea (desde tareas del día)
+  t - Ir a hoy (calendario)
   q - Salir
 """
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 from textual.binding import Binding
@@ -22,17 +26,22 @@ from dataclasses import dataclass
 from typing import Optional
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date, timedelta
+import calendar
+
+MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+         "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+DIAS_SEMANA = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
 
 
 @dataclass
 class Task:
-    """Representa una tarea."""
     id: int
     text: str
     done: bool = False
     created_at: str = ""
     group_id: Optional[int] = None
+    due_date: Optional[str] = None
     
     def __post_init__(self):
         if not self.created_at:
@@ -41,14 +50,11 @@ class Task:
 
 @dataclass
 class Group:
-    """Representa un grupo de tareas."""
     id: int
     name: str
 
 
 class TaskWidget(Static):
-    """Widget que representa una tarea individual."""
-    
     DEFAULT_CSS = """
     TaskWidget {
         width: 100%;
@@ -58,41 +64,18 @@ class TaskWidget(Static):
         margin-bottom: 1;
         layout: horizontal;
     }
-    
-    TaskWidget:hover {
-        background: $boost;
-    }
-    
+    TaskWidget:hover { background: $boost; }
     TaskWidget.selected {
         border: solid $accent;
         background: $surface-lighten-1;
     }
-    
-    TaskWidget .checkbox {
-        width: 4;
-        height: 1;
-    }
-    
-    TaskWidget .task-text {
-        width: 1fr;
-        height: 1;
-    }
-    
-    TaskWidget .task-time {
-        width: 12;
-        height: 1;
-        text-align: right;
-        color: $text-muted;
-    }
-    
-    TaskWidget.done .task-text {
-        text-style: strike;
-        color: $text-muted;
-    }
-    
-    TaskWidget.done .checkbox {
-        color: $success;
-    }
+    TaskWidget .checkbox { width: 4; height: 1; }
+    TaskWidget .task-text { width: 1fr; height: 1; }
+    TaskWidget .task-date { width: 8; height: 1; text-align: right; color: $warning; }
+    TaskWidget .task-time { width: 12; height: 1; text-align: right; color: $text-muted; }
+    TaskWidget.done .task-text { text-style: strike; color: $text-muted; }
+    TaskWidget.done .checkbox { color: $success; }
+    TaskWidget.done .task-date { color: $text-muted; }
     """
     
     def __init__(self, task_data: Task, **kwargs) -> None:
@@ -104,6 +87,13 @@ class TaskWidget(Static):
         checkbox = "☑" if self.task_data.done else "☐"
         yield Label(checkbox, classes="checkbox")
         yield Label(self.task_data.text, classes="task-text")
+        date_str = ""
+        if self.task_data.due_date:
+            try:
+                d = datetime.strptime(self.task_data.due_date, "%Y-%m-%d")
+                date_str = f"📅 {d.day:02d}/{d.month:02d}"
+            except: pass
+        yield Label(date_str, classes="task-date")
         yield Label(self.task_data.created_at, classes="task-time")
     
     @property
@@ -113,26 +103,12 @@ class TaskWidget(Static):
     @selected.setter
     def selected(self, value: bool) -> None:
         self._selected = value
-        if value:
-            self.add_class("selected")
-        else:
-            self.remove_class("selected")
+        self.set_class(value, "selected")
     
     def toggle_done(self) -> None:
-        """Alterna el estado de completado."""
         self.task_data.done = not self.task_data.done
-        if self.task_data.done:
-            self.add_class("done")
-        else:
-            self.remove_class("done")
-        checkbox = self.query_one(".checkbox", Label)
-        checkbox.update("☑" if self.task_data.done else "☐")
-    
-    def update_text(self, new_text: str) -> None:
-        """Actualiza el texto de la tarea."""
-        self.task_data.text = new_text
-        text_label = self.query_one(".task-text", Label)
-        text_label.update(new_text)
+        self.set_class(self.task_data.done, "done")
+        self.query_one(".checkbox", Label).update("☑" if self.task_data.done else "☐")
     
     def on_mount(self) -> None:
         if self.task_data.done:
@@ -140,49 +116,20 @@ class TaskWidget(Static):
 
 
 class InputModal(ModalScreen[Optional[str]]):
-    """Modal genérico para input de texto."""
-    
     DEFAULT_CSS = """
-    InputModal {
-        align: center middle;
-    }
-    
+    InputModal { align: center middle; }
     InputModal > Container {
-        width: 60;
-        height: auto;
-        border: thick $primary;
-        background: $surface;
-        padding: 1 2;
+        width: 60; height: auto; border: thick $primary;
+        background: $surface; padding: 1 2;
     }
-    
-    InputModal .modal-title {
-        text-align: center;
-        text-style: bold;
-        width: 100%;
-        margin-bottom: 1;
-    }
-    
-    InputModal Input {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    
-    InputModal .button-row {
-        width: 100%;
-        height: auto;
-        align: center middle;
-    }
-    
-    InputModal Button {
-        margin: 0 1;
-    }
+    InputModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    InputModal Input { width: 100%; margin-bottom: 1; }
+    InputModal .button-row { width: 100%; height: auto; align: center middle; }
+    InputModal Button { margin: 0 1; }
     """
+    BINDINGS = [Binding("escape", "cancel", show=False)]
     
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancelar", show=False),
-    ]
-    
-    def __init__(self, title: str = "Input", initial_text: str = "", placeholder: str = "", **kwargs) -> None:
+    def __init__(self, title: str = "", initial_text: str = "", placeholder: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
         self.title_text = title
         self.initial_text = initial_text
@@ -201,8 +148,7 @@ class InputModal(ModalScreen[Optional[str]]):
     
     @on(Button.Pressed, "#save")
     def on_save(self) -> None:
-        input_widget = self.query_one("#modal-input", Input)
-        text = input_widget.value.strip()
+        text = self.query_one("#modal-input", Input).value.strip()
         self.dismiss(text if text else None)
     
     @on(Button.Pressed, "#cancel")
@@ -210,54 +156,221 @@ class InputModal(ModalScreen[Optional[str]]):
         self.dismiss(None)
     
     @on(Input.Submitted)
-    def on_input_submitted(self) -> None:
+    def on_submit(self) -> None:
         self.on_save()
     
     def action_cancel(self) -> None:
         self.dismiss(None)
 
 
-class ConfirmModal(ModalScreen[bool]):
-    """Modal de confirmación."""
-    
+class EditTaskModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
-    ConfirmModal {
-        align: center middle;
+    EditTaskModal { align: center middle; }
+    EditTaskModal > Container {
+        width: 60; height: auto; border: thick $primary;
+        background: $surface; padding: 1 2;
     }
-    
-    ConfirmModal > Container {
-        width: 50;
-        height: auto;
-        border: thick $error;
-        background: $surface;
-        padding: 1 2;
-    }
-    
-    ConfirmModal .modal-title {
-        text-align: center;
-        text-style: bold;
-        width: 100%;
-        margin-bottom: 1;
-    }
-    
-    ConfirmModal .button-row {
-        width: 100%;
-        height: auto;
-        align: center middle;
-    }
-    
-    ConfirmModal Button {
-        margin: 0 1;
-    }
+    EditTaskModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    EditTaskModal .section-label { margin-top: 1; color: $text-muted; }
+    EditTaskModal Input { width: 100%; margin-bottom: 1; }
+    EditTaskModal .date-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
+    EditTaskModal .date-display { width: 1fr; padding: 0 1; }
+    EditTaskModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
+    EditTaskModal Button { margin: 0 1; }
     """
+    BINDINGS = [Binding("escape", "cancel", show=False)]
     
+    def __init__(self, task_text: str, current_date: Optional[str] = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.task_text = task_text
+        self.selected_date = current_date
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("✏️  Editar Tarea", classes="modal-title")
+            yield Label("Texto:", classes="section-label")
+            yield Input(value=self.task_text, id="task-input")
+            yield Label("Fecha:", classes="section-label")
+            with Horizontal(classes="date-row"):
+                yield Label(self._format_date(self.selected_date), id="date-display", classes="date-display")
+                yield Button("📅 Cambiar", id="change-date")
+                yield Button("❌ Quitar", id="remove-date")
+            with Horizontal(classes="button-row"):
+                yield Button("Guardar", variant="primary", id="save")
+                yield Button("Cancelar", variant="default", id="cancel")
+    
+    def _format_date(self, date_str: Optional[str]) -> str:
+        if not date_str: return "Sin fecha"
+        try:
+            d = datetime.strptime(date_str, "%Y-%m-%d")
+            return f"📅 {d.day:02d}/{d.month:02d}/{d.year}"
+        except: return "Sin fecha"
+    
+    def on_mount(self) -> None:
+        self.query_one("#task-input", Input).focus()
+    
+    @on(Button.Pressed, "#change-date")
+    def on_change_date(self) -> None:
+        def on_result(result: Optional[str]) -> None:
+            if result is not None:
+                self.selected_date = result if result else None
+                self.query_one("#date-display", Label).update(self._format_date(self.selected_date))
+        self.app.push_screen(DatePickerModal(self.selected_date), on_result)
+    
+    @on(Button.Pressed, "#remove-date")
+    def on_remove_date(self) -> None:
+        self.selected_date = None
+        self.query_one("#date-display", Label).update("Sin fecha")
+    
+    @on(Button.Pressed, "#save")
+    def on_save(self) -> None:
+        text = self.query_one("#task-input", Input).value.strip()
+        self.dismiss({"text": text, "date": self.selected_date} if text else None)
+    
+    @on(Button.Pressed, "#cancel")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class DatePickerModal(ModalScreen[Optional[str]]):
+    DEFAULT_CSS = """
+    DatePickerModal { align: center middle; }
+    DatePickerModal > Container {
+        width: 36; height: auto; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    DatePickerModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    DatePickerModal .calendar-header { width: 100%; text-align: center; margin-bottom: 1; text-style: bold; }
+    DatePickerModal .calendar-display { width: 100%; text-align: center; margin-bottom: 1; }
+    DatePickerModal .hint { width: 100%; text-align: center; color: $text-muted; margin-bottom: 1; }
+    DatePickerModal .button-row { width: 100%; height: auto; align: center middle; }
+    DatePickerModal Button { margin: 0 1; }
+    """
     BINDINGS = [
-        Binding("escape", "cancel", "Cancelar", show=False),
+        Binding("escape", "cancel", show=False),
+        Binding("left", "prev_day", show=False),
+        Binding("right", "next_day", show=False),
+        Binding("up", "prev_week", show=False),
+        Binding("down", "next_week", show=False),
+        Binding("tab", "next_month", show=False),
+        Binding("shift+tab", "prev_month", show=False),
+        Binding("enter", "select_date", show=False),
+    ]
+    
+    def __init__(self, current_date: Optional[str] = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        if current_date:
+            try: self.selected_date = datetime.strptime(current_date, "%Y-%m-%d").date()
+            except: self.selected_date = date.today()
+        else:
+            self.selected_date = date.today()
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("📅 Seleccionar Fecha", classes="modal-title")
+            yield Label("", id="month-label", classes="calendar-header")
+            yield Static("", id="calendar-display", classes="calendar-display")
+            yield Label("←→↑↓: Día | Tab: Mes", classes="hint")
+            with Horizontal(classes="button-row"):
+                yield Button("Seleccionar", variant="primary", id="select")
+                yield Button("Cancelar", variant="default", id="cancel")
+    
+    def on_mount(self) -> None:
+        self.update_display()
+    
+    def update_display(self) -> None:
+        self.query_one("#month-label", Label).update(f"{MESES[self.selected_date.month]} {self.selected_date.year}")
+        cal = calendar.Calendar(firstweekday=0)
+        today = date.today()
+        lines = ["  ".join(DIAS_SEMANA), "─" * 26]
+        for week in cal.monthdayscalendar(self.selected_date.year, self.selected_date.month):
+            week_str = ""
+            for day in week:
+                if day == 0:
+                    week_str += "    "
+                else:
+                    current = date(self.selected_date.year, self.selected_date.month, day)
+                    if current == self.selected_date:
+                        week_str += f"[bold cyan][{day:2d}][/bold cyan]"
+                    elif current == today:
+                        week_str += f"[bold green] {day:2d} [/bold green]"
+                    else:
+                        week_str += f" {day:2d} "
+            lines.append(week_str)
+        self.query_one("#calendar-display", Static).update("\n".join(lines))
+    
+    def action_prev_day(self) -> None:
+        self.selected_date -= timedelta(days=1)
+        self.update_display()
+    
+    def action_next_day(self) -> None:
+        self.selected_date += timedelta(days=1)
+        self.update_display()
+    
+    def action_prev_week(self) -> None:
+        self.selected_date -= timedelta(days=7)
+        self.update_display()
+    
+    def action_next_week(self) -> None:
+        self.selected_date += timedelta(days=7)
+        self.update_display()
+    
+    def action_prev_month(self) -> None:
+        y, m = self.selected_date.year, self.selected_date.month - 1
+        if m < 1: m, y = 12, y - 1
+        self.selected_date = date(y, m, min(self.selected_date.day, calendar.monthrange(y, m)[1]))
+        self.update_display()
+    
+    def action_next_month(self) -> None:
+        y, m = self.selected_date.year, self.selected_date.month + 1
+        if m > 12: m, y = 1, y + 1
+        self.selected_date = date(y, m, min(self.selected_date.day, calendar.monthrange(y, m)[1]))
+        self.update_display()
+    
+    def action_select_date(self) -> None:
+        self.dismiss(self.selected_date.strftime("%Y-%m-%d"))
+    
+    @on(Button.Pressed, "#select")
+    def on_select(self) -> None:
+        self.action_select_date()
+    
+    @on(Button.Pressed, "#cancel")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class ConfirmModal(ModalScreen[bool]):
+    DEFAULT_CSS = """
+    ConfirmModal { align: center middle; }
+    ConfirmModal > Container {
+        width: 50; height: auto; border: thick $error;
+        background: $surface; padding: 1 2;
+    }
+    ConfirmModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    ConfirmModal .button-row { width: 100%; height: auto; align: center middle; }
+    ConfirmModal Button { margin: 0 1; }
+    ConfirmModal Button.selected { border: solid $accent; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("left", "select_yes", show=False),
+        Binding("right", "select_no", show=False),
+        Binding("h", "select_yes", show=False),
+        Binding("l", "select_no", show=False),
+        Binding("enter", "confirm", show=False),
+        Binding("space", "confirm", show=False),
     ]
     
     def __init__(self, message: str, **kwargs) -> None:
         super().__init__(**kwargs)
         self.message = message
+        self.selected_yes = True
     
     def compose(self) -> ComposeResult:
         with Container():
@@ -265,6 +378,26 @@ class ConfirmModal(ModalScreen[bool]):
             with Horizontal(classes="button-row"):
                 yield Button("Sí", variant="error", id="yes")
                 yield Button("No", variant="default", id="no")
+    
+    def on_mount(self) -> None:
+        self.update_selection()
+    
+    def update_selection(self) -> None:
+        yes_btn = self.query_one("#yes", Button)
+        no_btn = self.query_one("#no", Button)
+        yes_btn.set_class(self.selected_yes, "selected")
+        no_btn.set_class(not self.selected_yes, "selected")
+    
+    def action_select_yes(self) -> None:
+        self.selected_yes = True
+        self.update_selection()
+    
+    def action_select_no(self) -> None:
+        self.selected_yes = False
+        self.update_selection()
+    
+    def action_confirm(self) -> None:
+        self.dismiss(self.selected_yes)
     
     @on(Button.Pressed, "#yes")
     def on_yes(self) -> None:
@@ -279,41 +412,31 @@ class ConfirmModal(ModalScreen[bool]):
 
 
 class GroupOptionsModal(ModalScreen[str]):
-    """Modal para opciones de grupo (editar/eliminar)."""
-    
     DEFAULT_CSS = """
-    GroupOptionsModal {
-        align: center middle;
-    }
-    
+    GroupOptionsModal { align: center middle; }
     GroupOptionsModal > Container {
-        width: 40;
-        height: auto;
-        border: thick $primary;
-        background: $surface;
-        padding: 1 2;
+        width: 40; height: auto; border: thick $primary;
+        background: $surface; padding: 1 2;
     }
-    
-    GroupOptionsModal .modal-title {
-        text-align: center;
-        text-style: bold;
-        width: 100%;
-        margin-bottom: 1;
-    }
-    
-    GroupOptionsModal Button {
-        width: 100%;
-        margin: 1 0;
-    }
+    GroupOptionsModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    GroupOptionsModal Button { width: 100%; margin: 1 0; }
+    GroupOptionsModal Button.selected { border: solid $accent; }
     """
-    
     BINDINGS = [
-        Binding("escape", "cancel", "Cancelar", show=False),
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("enter", "confirm", show=False),
+        Binding("space", "confirm", show=False),
     ]
     
     def __init__(self, group_name: str, **kwargs) -> None:
         super().__init__(**kwargs)
         self.group_name = group_name
+        self.selected_index = 0
+        self.options = ["rename", "delete", ""]
     
     def compose(self) -> ComposeResult:
         with Container():
@@ -321,6 +444,28 @@ class GroupOptionsModal(ModalScreen[str]):
             yield Button("✏️  Renombrar", variant="primary", id="rename")
             yield Button("🗑️  Eliminar grupo y tareas", variant="error", id="delete")
             yield Button("Cancelar", variant="default", id="cancel")
+    
+    def on_mount(self) -> None:
+        self.update_selection()
+    
+    def update_selection(self) -> None:
+        buttons = [("rename", 0), ("delete", 1), ("cancel", 2)]
+        for btn_id, idx in buttons:
+            try:
+                btn = self.query_one(f"#{btn_id}", Button)
+                btn.set_class(idx == self.selected_index, "selected")
+            except: pass
+    
+    def action_move_up(self) -> None:
+        self.selected_index = (self.selected_index - 1) % 3
+        self.update_selection()
+    
+    def action_move_down(self) -> None:
+        self.selected_index = (self.selected_index + 1) % 3
+        self.update_selection()
+    
+    def action_confirm(self) -> None:
+        self.dismiss(self.options[self.selected_index])
     
     @on(Button.Pressed, "#rename")
     def on_rename(self) -> None:
@@ -338,112 +483,111 @@ class GroupOptionsModal(ModalScreen[str]):
         self.dismiss("")
 
 
-class SearchResultItem(Static):
-    """Widget para un resultado de búsqueda."""
-    
+class DayTasksModal(ModalScreen[Optional[Task]]):
     DEFAULT_CSS = """
-    SearchResultItem {
-        width: 100%;
-        height: 3;
-        padding: 0 1;
-        border: solid $primary-background;
-        margin-bottom: 1;
-        layout: horizontal;
+    DayTasksModal { align: center middle; }
+    DayTasksModal > Container {
+        width: 70; height: 20; border: thick $primary;
+        background: $surface; padding: 1 2;
     }
-    
-    SearchResultItem:hover {
-        background: $boost;
+    DayTasksModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    DayTasksModal #tasks-list { width: 100%; height: 1fr; overflow-y: auto; }
+    DayTasksModal .task-item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
     }
-    
-    SearchResultItem.selected {
-        border: solid $accent;
-        background: $surface-lighten-1;
-    }
-    
-    SearchResultItem .result-task {
-        width: 1fr;
-        height: 1;
-        content-align: left middle;
-    }
-    
-    SearchResultItem .result-group {
-        width: auto;
-        height: 1;
-        content-align: right middle;
-        color: $text-muted;
-    }
+    DayTasksModal .task-item:hover { background: $boost; }
+    DayTasksModal .task-item.selected { border: solid $accent; background: $surface-lighten-1; }
+    DayTasksModal .hint { width: 100%; text-align: center; color: $text-muted; margin-top: 1; }
+    DayTasksModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
     """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("space", "go_to_task", show=False),
+        Binding("enter", "go_to_task", show=False),
+    ]
     
-    def __init__(self, task_data: Task, group_name: str, **kwargs) -> None:
+    def __init__(self, tasks: list[tuple[Task, str]], date_str: str, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.task_data = task_data
-        self.group_name = group_name
-        self._selected = False
+        self.tasks = tasks
+        self.date_str = date_str
+        self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        yield Static(self.task_data.text, classes="result-task")
-        yield Static(f"Grupo: {self.group_name}", classes="result-group")
+        with Container():
+            yield Label(f"📅 Tareas del {self.date_str}", classes="modal-title")
+            yield Container(id="tasks-list")
+            yield Label("↑↓ Navegar | Espacio/Enter: Ir al grupo | Esc: Cerrar", classes="hint")
     
-    @property
-    def selected(self) -> bool:
-        return self._selected
-    
-    @selected.setter
-    def selected(self, value: bool) -> None:
-        self._selected = value
-        if value:
-            self.add_class("selected")
+    async def on_mount(self) -> None:
+        tasks_list = self.query_one("#tasks-list", Container)
+        if not self.tasks:
+            await tasks_list.mount(Label("No hay tareas para este día", classes="empty-msg"))
         else:
-            self.remove_class("selected")
+            for i, (task, group_name) in enumerate(self.tasks):
+                checkbox = "☑" if task.done else "☐"
+                text = f"{checkbox} {task.text}  [{group_name}]"
+                item = Static(text, id=f"task-item-{i}", classes="task-item")
+                await tasks_list.mount(item)
+                if i == 0:
+                    item.add_class("selected")
+    
+    def update_selection(self) -> None:
+        for i in range(len(self.tasks)):
+            try:
+                item = self.query_one(f"#task-item-{i}", Static)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
+    
+    def action_move_up(self) -> None:
+        if self.tasks and self.selected_index > 0:
+            self.selected_index -= 1
+            self.update_selection()
+    
+    def action_move_down(self) -> None:
+        if self.tasks and self.selected_index < len(self.tasks) - 1:
+            self.selected_index += 1
+            self.update_selection()
+    
+    def action_go_to_task(self) -> None:
+        if self.tasks:
+            self.dismiss(self.tasks[self.selected_index][0])
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class SearchResultsScreen(ModalScreen[Optional[Task]]):
-    """Pantalla de resultados de búsqueda."""
-    
     DEFAULT_CSS = """
-    SearchResultsScreen {
-        align: center middle;
-    }
-    
+    SearchResultsScreen { align: center middle; }
     SearchResultsScreen > Container {
-        width: 70;
-        height: 20;
-        border: thick $primary;
-        background: $surface;
-        padding: 1 2;
+        width: 70; height: 20; border: thick $primary;
+        background: $surface; padding: 1 2;
     }
-    
-    SearchResultsScreen .modal-title {
-        text-align: center;
-        text-style: bold;
-        width: 100%;
-        margin-bottom: 1;
+    SearchResultsScreen .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    SearchResultsScreen #results-list { width: 100%; height: 1fr; overflow-y: auto; }
+    SearchResultsScreen .result-item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
     }
-    
-    SearchResultsScreen #results-list {
-        width: 100%;
-        height: 1fr;
-        overflow-y: auto;
-    }
-    
-    SearchResultsScreen .hint {
-        width: 100%;
-        text-align: center;
-        color: $text-muted;
-        margin-top: 1;
-    }
+    SearchResultsScreen .result-item:hover { background: $boost; }
+    SearchResultsScreen .result-item.selected { border: solid $accent; background: $surface-lighten-1; }
+    SearchResultsScreen .hint { width: 100%; text-align: center; color: $text-muted; margin-top: 1; }
     """
-    
     BINDINGS = [
-        Binding("escape", "cancel", "Cancelar", show=False),
-        Binding("up", "move_up", "Arriba", show=False),
-        Binding("down", "move_down", "Abajo", show=False),
-        Binding("enter", "select_result", "Ir al grupo", show=False),
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("enter", "select_result", show=False),
     ]
     
     def __init__(self, results: list[tuple[Task, str]], search_term: str, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.results = results  # Lista de (Task, group_name)
+        self.results = results
         self.search_term = search_term
         self.selected_index = 0
     
@@ -456,18 +600,18 @@ class SearchResultsScreen(ModalScreen[Optional[Task]]):
     async def on_mount(self) -> None:
         results_list = self.query_one("#results-list", Container)
         for i, (task, group_name) in enumerate(self.results):
-            item = SearchResultItem(task, group_name, id=f"result-{i}")
+            text = f"{task.text}  [{group_name}]"
+            item = Static(text, id=f"result-{i}", classes="result-item")
             await results_list.mount(item)
             if i == 0:
-                item.selected = True
+                item.add_class("selected")
     
     def update_selection(self) -> None:
         for i in range(len(self.results)):
             try:
-                item = self.query_one(f"#result-{i}", SearchResultItem)
-                item.selected = (i == self.selected_index)
-            except Exception:
-                pass
+                item = self.query_one(f"#result-{i}", Static)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
     
     def action_move_up(self) -> None:
         if self.selected_index > 0:
@@ -481,41 +625,25 @@ class SearchResultsScreen(ModalScreen[Optional[Task]]):
     
     def action_select_result(self) -> None:
         if self.results:
-            task, _ = self.results[self.selected_index]
-            self.dismiss(task)
+            self.dismiss(self.results[self.selected_index][0])
     
     def action_cancel(self) -> None:
         self.dismiss(None)
 
 
 class GroupTab(Static):
-    """Widget para una pestaña de grupo."""
-    
     DEFAULT_CSS = """
     GroupTab {
-        width: auto;
-        height: 3;
-        padding: 0 2;
-        margin: 0 1;
-        border: solid $primary-background;
-        content-align: center middle;
+        width: auto; height: 3; padding: 0 2; margin: 0 1;
+        border: solid $primary-background; content-align: center middle;
     }
-    
-    GroupTab:hover {
-        background: $boost;
-    }
-    
-    GroupTab.active {
-        border: solid $accent;
-        background: $accent 20%;
-        text-style: bold;
-    }
+    GroupTab:hover { background: $boost; }
+    GroupTab.active { border: solid $accent; background: $accent 20%; text-style: bold; }
     """
     
     def __init__(self, group_id: Optional[int], name: str, **kwargs) -> None:
         super().__init__(name, **kwargs)
         self.group_id = group_id
-        self.group_name = name
         self._active = False
     
     @property
@@ -525,65 +653,24 @@ class GroupTab(Static):
     @active.setter
     def active(self, value: bool) -> None:
         self._active = value
-        if value:
-            self.add_class("active")
-        else:
-            self.remove_class("active")
+        self.set_class(value, "active")
 
 
 class TodoApp(App):
-    """Aplicación TODO para terminal con grupos."""
-    
     CSS = """
-    Screen {
-        background: $background;
-    }
-    
-    #main-container {
-        width: 100%;
-        height: 1fr;
-        padding: 0 2;
-    }
-    
-    #tabs-container {
-        width: 100%;
-        height: 3;
-        layout: horizontal;
-        padding: 0 1;
-    }
-    
-    #task-list {
-        width: 100%;
-        height: 1fr;
-        overflow-y: auto;
-        padding: 1;
-    }
-    
-    #empty-message {
-        width: 100%;
-        height: 100%;
-        content-align: center middle;
-        color: $text-muted;
-        text-style: italic;
-    }
-    
-    #stats {
-        dock: bottom;
-        width: 100%;
-        height: 1;
-        background: $primary-background;
-        color: $text;
-        padding: 0 2;
-        text-align: left;
-    }
-    
-    #completed-separator {
-        width: 100%;
-        height: 1;
-        text-align: center;
-        color: $text-muted;
-        margin: 1 0;
-    }
+    Screen { background: $background; }
+    #main-container { width: 100%; height: 1fr; padding: 0 2; }
+    #tabs-container { width: 100%; height: 3; layout: horizontal; padding: 0 1; }
+    #task-list { width: 100%; height: 1fr; overflow-y: auto; padding: 1; }
+    #calendar-view { width: 100%; height: 1fr; padding: 1; display: none; align: center top; }
+    #calendar-view.visible { display: block; }
+    #calendar-header { width: 100%; text-align: center; text-style: bold; padding: 1; }
+    #calendar-display { width: 100%; text-align: center; padding: 1; }
+    #calendar-day-tasks { width: 100%; text-align: center; padding: 1; margin-top: 1; border-top: solid $primary-background; }
+    #calendar-hint { width: 100%; text-align: center; color: $text-muted; padding: 1; }
+    #empty-message { width: 100%; height: 100%; content-align: center middle; color: $text-muted; text-style: italic; }
+    #stats { dock: bottom; width: 100%; height: 1; background: $primary-background; color: $text; padding: 0 2; }
+    #completed-separator { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
     """
     
     BINDINGS = [
@@ -592,17 +679,21 @@ class TodoApp(App):
         Binding("d", "delete_task", "Eliminar"),
         Binding("g", "new_group", "Nuevo Grupo"),
         Binding("G", "group_options", "Opc. Grupo"),
+        Binding("c", "toggle_calendar", "Calendario"),
         Binding("/", "search", "Buscar"),
-        Binding("left", "prev_group", "← Grupo"),
-        Binding("right", "next_group", "Grupo →"),
+        Binding("left", "nav_left", show=False),
+        Binding("right", "nav_right", show=False),
+        Binding("up", "nav_up", show=False),
+        Binding("down", "nav_down", show=False),
+        Binding("h", "nav_left", show=False),
+        Binding("l", "nav_right", show=False),
+        Binding("k", "nav_up", show=False),
+        Binding("j", "nav_down", show=False),
+        Binding("tab", "next_month", show=False),
+        Binding("shift+tab", "prev_month", show=False),
+        Binding("t", "go_today", show=False),
         Binding("space", "toggle_done", "Completar"),
-        Binding("enter", "toggle_done", "Completar", show=False),
-        Binding("up", "move_up", "Arriba", show=False),
-        Binding("down", "move_down", "Abajo", show=False),
-        Binding("k", "move_up", "Arriba", show=False),
-        Binding("j", "move_down", "Abajo", show=False),
-        Binding("h", "prev_group", "", show=False),
-        Binding("l", "next_group", "", show=False),
+        Binding("enter", "action_enter", show=False),
         Binding("q", "quit", "Salir"),
     ]
     
@@ -615,460 +706,463 @@ class TodoApp(App):
         self.next_task_id = 1
         self.next_group_id = 1
         self.selected_index = 0
-        self.current_group_id: Optional[int] = None  # None = "Todas"
-        self.data_file = self._get_data_path()
+        self.current_group_id: Optional[int] = None
+        self.data_file = Path.home() / "todo" / "todo_tasks.json"
+        self.data_file.parent.mkdir(exist_ok=True)
+        
+        self.calendar_mode = False
+        self.cal_year = date.today().year
+        self.cal_month = date.today().month
+        self.cal_day = date.today().day
+        
         self.load_data()
-    
-    def _get_data_path(self) -> Path:
-        """Obtiene la ruta del archivo de datos según el sistema operativo."""
-        import platform
-        
-        if platform.system() == "Windows":
-            # Windows: C:/Users/usuario/todo/todo_tasks.json
-            todo_dir = Path.home() / "todo"
-        else:
-            # Linux/WSL: /home/usuario/todo/todo_tasks.json
-            todo_dir = Path.home() / "todo"
-        
-        # Crear directorio si no existe
-        todo_dir.mkdir(exist_ok=True)
-        
-        return todo_dir / "todo_tasks.json"
     
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="main-container"):
             yield Horizontal(id="tabs-container")
             yield Container(id="task-list")
-            yield Static("Total: 0 | Completadas: 0 | Pendientes: 0 | Grupo: Sin grupo", id="stats")
+            with Container(id="calendar-view"):
+                yield Static("", id="calendar-header")
+                yield Static("", id="calendar-display")
+                yield Static("", id="calendar-day-tasks")
+                yield Static("←→↑↓: Navegar | Tab: Mes | t: Hoy | Enter: Ver tareas | c: Volver", id="calendar-hint")
+            yield Static("", id="stats")
         yield Footer()
     
     async def on_mount(self) -> None:
         await self.refresh_tabs()
-        await self.refresh_task_list()
+        await self.refresh_view()
         self.update_stats()
     
     async def refresh_tabs(self) -> None:
-        """Refresca las pestañas de grupos."""
-        tabs_container = self.query_one("#tabs-container", Horizontal)
-        await tabs_container.remove_children()
+        tabs = self.query_one("#tabs-container", Horizontal)
+        await tabs.remove_children()
         
-        # Pestaña "Sin grupo"
-        all_tab = GroupTab(None, "📋 Sin grupo", id="tab-all")
-        await tabs_container.mount(all_tab)
-        all_tab.active = (self.current_group_id is None)
-        
-        # Pestañas de grupos
-        for group in self.groups:
-            # Icono de carpeta abierta si está activo, cerrada si no
-            icon = "📂" if self.current_group_id == group.id else "📁"
-            tab = GroupTab(group.id, f"{icon} {group.name}", id=f"tab-{group.id}")
-            await tabs_container.mount(tab)
-            tab.active = (self.current_group_id == group.id)
+        if self.calendar_mode:
+            tab = GroupTab(None, "📅 Calendario", id="tab-calendar")
+            await tabs.mount(tab)
+            tab.active = True
+        else:
+            tab = GroupTab(None, "📋 Sin grupo", id="tab-all")
+            await tabs.mount(tab)
+            tab.active = (self.current_group_id is None)
+            
+            for g in self.groups:
+                icon = "📂" if self.current_group_id == g.id else "📁"
+                t = GroupTab(g.id, f"{icon} {g.name}", id=f"tab-{g.id}")
+                await tabs.mount(t)
+                t.active = (self.current_group_id == g.id)
     
     def _get_current_tasks(self) -> list[Task]:
-        """Obtiene las tareas del grupo actual."""
         if self.current_group_id is None:
-            # "Todas" muestra solo tareas sin grupo asignado
             return [t for t in self.tasks if t.group_id is None]
         return [t for t in self.tasks if t.group_id == self.current_group_id]
     
-    async def refresh_task_list(self) -> None:
-        """Refresca la lista de tareas en la UI."""
-        task_list = self.query_one("#task-list", Container)
-        await task_list.remove_children()
-        
-        current_tasks = self._get_current_tasks()
-        pending = [t for t in current_tasks if not t.done]
-        completed = [t for t in current_tasks if t.done]
-        
-        if not current_tasks:
-            if self.current_group_id is not None:
-                group = next((g for g in self.groups if g.id == self.current_group_id), None)
-                if group:
-                    msg = f"No hay tareas en '{group.name}'. Pulsa 'a' para añadir."
+    def _get_tasks_for_date(self, y: int, m: int, d: int) -> list[tuple[Task, str]]:
+        date_str = f"{y:04d}-{m:02d}-{d:02d}"
+        result = []
+        for t in self.tasks:
+            if t.due_date == date_str:
+                if t.group_id is None:
+                    gname = "Sin grupo"
                 else:
-                    msg = "No hay tareas. Pulsa 'a' para añadir una."
-            else:
-                msg = "No hay tareas. Pulsa 'a' para añadir una."
+                    g = next((x for x in self.groups if x.id == t.group_id), None)
+                    gname = g.name if g else "Sin grupo"
+                result.append((t, gname))
+        return result
+    
+    async def refresh_view(self) -> None:
+        task_list = self.query_one("#task-list", Container)
+        calendar_view = self.query_one("#calendar-view", Container)
+        
+        if self.calendar_mode:
+            task_list.styles.display = "none"
+            calendar_view.add_class("visible")
+            calendar_view.styles.display = "block"
+            self.refresh_calendar()
+        else:
+            task_list.styles.display = "block"
+            calendar_view.remove_class("visible")
+            calendar_view.styles.display = "none"
+            await self._refresh_task_list(task_list)
+    
+    async def _refresh_task_list(self, task_list: Container) -> None:
+        await task_list.remove_children()
+        current = self._get_current_tasks()
+        pending = [t for t in current if not t.done]
+        completed = [t for t in current if t.done]
+        
+        if not current:
+            msg = "No hay tareas. Pulsa 'a' para añadir una."
             await task_list.mount(Label(msg, id="empty-message"))
         else:
-            for task in pending:
-                widget = TaskWidget(task, id=f"task-{task.id}")
-                await task_list.mount(widget)
-            
+            for t in pending:
+                w = TaskWidget(t, id=f"task-{t.id}")
+                await task_list.mount(w)
             if completed:
-                separator = Static("── Completadas ──", id="completed-separator")
-                await task_list.mount(separator)
-                
-                for task in completed:
-                    widget = TaskWidget(task, id=f"task-{task.id}")
-                    await task_list.mount(widget)
+                await task_list.mount(Static("── Completadas ──", id="completed-separator"))
+                for t in completed:
+                    w = TaskWidget(t, id=f"task-{t.id}")
+                    await task_list.mount(w)
         
-        self._update_selection_after_refresh(pending, completed)
+        self._update_selection(pending, completed)
     
-    def _update_selection_after_refresh(self, pending: list, completed: list) -> None:
-        """Actualiza la selección visual después de refrescar."""
+    def refresh_calendar(self) -> None:
+        self.query_one("#calendar-header", Static).update(f"{MESES[self.cal_month]} {self.cal_year}")
+        
+        cal = calendar.Calendar(firstweekday=0)
+        today = date.today()
+        lines = ["  ".join(DIAS_SEMANA), "─" * 26]
+        
+        for week in cal.monthdayscalendar(self.cal_year, self.cal_month):
+            week_str = ""
+            for day in week:
+                if day == 0:
+                    week_str += "    "
+                else:
+                    current = date(self.cal_year, self.cal_month, day)
+                    has_tasks = any(t.due_date == current.strftime("%Y-%m-%d") for t in self.tasks)
+                    
+                    if day == self.cal_day:
+                        week_str += f"[bold cyan][{day:2d}][/bold cyan]"
+                    elif current == today:
+                        week_str += f"[bold green]•{day:2d} [/bold green]" if has_tasks else f"[bold green] {day:2d} [/bold green]"
+                    elif has_tasks:
+                        week_str += f"[yellow]•{day:2d} [/yellow]"
+                    else:
+                        week_str += f" {day:2d} "
+            lines.append(week_str)
+        
+        self.query_one("#calendar-display", Static).update("\n".join(lines))
+        
+        tasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
+        day_tasks = self.query_one("#calendar-day-tasks", Static)
+        
+        if tasks:
+            lines = [f"📋 {len(tasks)} tarea(s):"]
+            for t, gname in tasks[:3]:
+                cb = "☑" if t.done else "☐"
+                txt = t.text[:30] + "..." if len(t.text) > 30 else t.text
+                lines.append(f"  {cb} {txt} [{gname}]")
+            if len(tasks) > 3:
+                lines.append(f"  ... y {len(tasks) - 3} más")
+            day_tasks.update("\n".join(lines))
+        else:
+            day_tasks.update("No hay tareas para este día")
+    
+    def _update_selection(self, pending: list, completed: list) -> None:
         all_tasks = pending + completed
         if not all_tasks:
             self.selected_index = 0
             return
-        
         self.selected_index = max(0, min(self.selected_index, len(all_tasks) - 1))
-        
-        for i, task in enumerate(all_tasks):
+        for i, t in enumerate(all_tasks):
             try:
-                widget = self.query_one(f"#task-{task.id}", TaskWidget)
-                widget.selected = (i == self.selected_index)
-            except Exception:
-                pass
+                w = self.query_one(f"#task-{t.id}", TaskWidget)
+                w.selected = (i == self.selected_index)
+            except: pass
     
     def _get_ordered_tasks(self) -> list:
-        """Devuelve las tareas actuales ordenadas."""
-        current = self._get_current_tasks()
-        pending = [t for t in current if not t.done]
-        completed = [t for t in current if t.done]
-        return pending + completed
+        c = self._get_current_tasks()
+        return [t for t in c if not t.done] + [t for t in c if t.done]
     
     def update_selection(self) -> None:
-        """Actualiza la selección visual."""
         ordered = self._get_ordered_tasks()
-        if not ordered:
-            return
-        
+        if not ordered: return
         self.selected_index = max(0, min(self.selected_index, len(ordered) - 1))
-        
-        for i, task in enumerate(ordered):
+        for i, t in enumerate(ordered):
             try:
-                widget = self.query_one(f"#task-{task.id}", TaskWidget)
-                widget.selected = (i == self.selected_index)
-            except Exception:
-                pass
+                self.query_one(f"#task-{t.id}", TaskWidget).selected = (i == self.selected_index)
+            except: pass
     
     def update_stats(self) -> None:
-        """Actualiza las estadísticas."""
-        current = self._get_current_tasks()
-        total = len(current)
-        done = sum(1 for t in current if t.done)
-        pending = total - done
-        
-        if self.current_group_id is not None:
-            group = next((g for g in self.groups if g.id == self.current_group_id), None)
-            group_name = group.name if group else "Sin grupo"
+        if self.calendar_mode:
+            tasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
+            total, done = len(tasks), sum(1 for t, _ in tasks if t.done)
+            text = f"📅 {self.cal_day}/{self.cal_month}/{self.cal_year} | Tareas: {total} | Completadas: {done}"
         else:
-            group_name = "Sin grupo"
-        
-        stats_text = f"Total: {total} | Completadas: {done} | Pendientes: {pending} | Grupo: {group_name}"
-        stats = self.query_one("#stats", Static)
-        stats.update(stats_text)
+            c = self._get_current_tasks()
+            total, done = len(c), sum(1 for t in c if t.done)
+            gname = "Sin grupo"
+            if self.current_group_id:
+                g = next((x for x in self.groups if x.id == self.current_group_id), None)
+                gname = g.name if g else "Sin grupo"
+            text = f"Total: {total} | Completadas: {done} | Pendientes: {total - done} | Grupo: {gname}"
+        self.query_one("#stats", Static).update(text)
     
-    def get_selected_task_widget(self) -> Optional[TaskWidget]:
-        """Obtiene el widget de la tarea seleccionada."""
+    def get_selected_widget(self) -> Optional[TaskWidget]:
         ordered = self._get_ordered_tasks()
-        if not ordered or self.selected_index >= len(ordered):
-            return None
-        task = ordered[self.selected_index]
-        try:
-            return self.query_one(f"#task-{task.id}", TaskWidget)
-        except Exception:
-            return None
+        if not ordered or self.selected_index >= len(ordered): return None
+        try: return self.query_one(f"#task-{ordered[self.selected_index].id}", TaskWidget)
+        except: return None
     
-    # Acciones de navegación entre grupos
-    async def action_prev_group(self) -> None:
-        """Cambia al grupo anterior."""
-        group_ids = [None] + [g.id for g in self.groups]
-        current_idx = group_ids.index(self.current_group_id)
-        new_idx = (current_idx - 1) % len(group_ids)
-        self.current_group_id = group_ids[new_idx]
+    # Navigation
+    async def action_nav_left(self) -> None:
+        if self.calendar_mode:
+            d = date(self.cal_year, self.cal_month, self.cal_day) - timedelta(days=1)
+            self.cal_year, self.cal_month, self.cal_day = d.year, d.month, d.day
+            self.refresh_calendar()
+            self.update_stats()
+        else:
+            await self._prev_group()
+    
+    async def action_nav_right(self) -> None:
+        if self.calendar_mode:
+            d = date(self.cal_year, self.cal_month, self.cal_day) + timedelta(days=1)
+            self.cal_year, self.cal_month, self.cal_day = d.year, d.month, d.day
+            self.refresh_calendar()
+            self.update_stats()
+        else:
+            await self._next_group()
+    
+    async def action_nav_up(self) -> None:
+        if self.calendar_mode:
+            d = date(self.cal_year, self.cal_month, self.cal_day) - timedelta(days=7)
+            self.cal_year, self.cal_month, self.cal_day = d.year, d.month, d.day
+            self.refresh_calendar()
+            self.update_stats()
+        else:
+            if self._get_ordered_tasks() and self.selected_index > 0:
+                self.selected_index -= 1
+                self.update_selection()
+    
+    async def action_nav_down(self) -> None:
+        if self.calendar_mode:
+            d = date(self.cal_year, self.cal_month, self.cal_day) + timedelta(days=7)
+            self.cal_year, self.cal_month, self.cal_day = d.year, d.month, d.day
+            self.refresh_calendar()
+            self.update_stats()
+        else:
+            ordered = self._get_ordered_tasks()
+            if ordered and self.selected_index < len(ordered) - 1:
+                self.selected_index += 1
+                self.update_selection()
+    
+    def action_next_month(self) -> None:
+        if self.calendar_mode:
+            self.cal_month += 1
+            if self.cal_month > 12:
+                self.cal_month, self.cal_year = 1, self.cal_year + 1
+            self.cal_day = min(self.cal_day, calendar.monthrange(self.cal_year, self.cal_month)[1])
+            self.refresh_calendar()
+            self.update_stats()
+    
+    def action_prev_month(self) -> None:
+        if self.calendar_mode:
+            self.cal_month -= 1
+            if self.cal_month < 1:
+                self.cal_month, self.cal_year = 12, self.cal_year - 1
+            self.cal_day = min(self.cal_day, calendar.monthrange(self.cal_year, self.cal_month)[1])
+            self.refresh_calendar()
+            self.update_stats()
+    
+    def action_go_today(self) -> None:
+        if self.calendar_mode:
+            today = date.today()
+            self.cal_year, self.cal_month, self.cal_day = today.year, today.month, today.day
+            self.refresh_calendar()
+            self.update_stats()
+    
+    async def _prev_group(self) -> None:
+        ids = [None] + [g.id for g in self.groups]
+        idx = (ids.index(self.current_group_id) - 1) % len(ids)
+        self.current_group_id = ids[idx]
         self.selected_index = 0
         await self.refresh_tabs()
-        await self.refresh_task_list()
+        await self.refresh_view()
         self.update_stats()
     
-    async def action_next_group(self) -> None:
-        """Cambia al grupo siguiente."""
-        group_ids = [None] + [g.id for g in self.groups]
-        current_idx = group_ids.index(self.current_group_id)
-        new_idx = (current_idx + 1) % len(group_ids)
-        self.current_group_id = group_ids[new_idx]
+    async def _next_group(self) -> None:
+        ids = [None] + [g.id for g in self.groups]
+        idx = (ids.index(self.current_group_id) + 1) % len(ids)
+        self.current_group_id = ids[idx]
         self.selected_index = 0
         await self.refresh_tabs()
-        await self.refresh_task_list()
+        await self.refresh_view()
         self.update_stats()
     
-    # Acción de búsqueda
-    def action_search(self) -> None:
-        """Busca tareas por texto."""
-        def on_search_input(query: Optional[str]) -> None:
-            if not query:
-                return
-            
-            # Buscar en todas las tareas
-            query_lower = query.lower()
-            results: list[tuple[Task, str]] = []
-            
-            for task in self.tasks:
-                if query_lower in task.text.lower():
-                    # Obtener nombre del grupo
-                    if task.group_id is None:
-                        group_name = "Sin grupo"
-                    else:
-                        group = next((g for g in self.groups if g.id == task.group_id), None)
-                        group_name = group.name if group else "Sin grupo"
-                    results.append((task, group_name))
-            
-            if not results:
-                # No se encontró nada
-                self.push_screen(ConfirmModal(f"No se encontraron tareas para '{query}'"))
-            elif len(results) == 1:
-                # Solo un resultado: ir directamente al grupo
-                task, _ = results[0]
-                self._go_to_task(task)
-            else:
-                # Múltiples resultados: mostrar pantalla de selección
-                self.push_screen(SearchResultsScreen(results, query), self._on_search_result)
-        
-        self.push_screen(InputModal("🔍 Buscar", placeholder="Buscar tareas..."), on_search_input)
+    async def action_toggle_calendar(self) -> None:
+        self.calendar_mode = not self.calendar_mode
+        if self.calendar_mode:
+            today = date.today()
+            self.cal_year, self.cal_month, self.cal_day = today.year, today.month, today.day
+        await self.refresh_tabs()
+        await self.refresh_view()
+        self.update_stats()
     
-    def _on_search_result(self, task: Optional[Task]) -> None:
-        """Callback cuando se selecciona un resultado de búsqueda."""
-        if task:
-            self._go_to_task(task)
+    def action_action_enter(self) -> None:
+        if self.calendar_mode:
+            tasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
+            date_str = f"{self.cal_day}/{self.cal_month}/{self.cal_year}"
+            self.push_screen(DayTasksModal(tasks, date_str), lambda t: self._go_to_task(t) if t else None)
+        else:
+            self.action_toggle_done()
+    
+    async def action_toggle_done(self) -> None:
+        if not self.calendar_mode:
+            w = self.get_selected_widget()
+            if w:
+                w.toggle_done()
+                self.update_stats()
+                self.save_data()
+                await self.refresh_view()
     
     def _go_to_task(self, task: Task) -> None:
-        """Navega al grupo de una tarea y la selecciona."""
-        async def do_navigation() -> None:
-            # Cambiar al grupo de la tarea
+        async def nav() -> None:
+            self.calendar_mode = False
             self.current_group_id = task.group_id
             self.selected_index = 0
-            
             await self.refresh_tabs()
-            await self.refresh_task_list()
+            await self.refresh_view()
             self.update_stats()
-            
-            # Seleccionar la tarea en la lista
-            ordered = self._get_ordered_tasks()
-            for i, t in enumerate(ordered):
+            for i, t in enumerate(self._get_ordered_tasks()):
                 if t.id == task.id:
                     self.selected_index = i
                     break
             self.update_selection()
-        
-        self.call_later(do_navigation)
-
-    # Acciones de grupos
+        self.call_later(nav)
+    
+    # Search
+    def action_search(self) -> None:
+        def on_input(query: Optional[str]) -> None:
+            if not query: return
+            results = []
+            for t in self.tasks:
+                if query.lower() in t.text.lower():
+                    gname = "Sin grupo"
+                    if t.group_id:
+                        g = next((x for x in self.groups if x.id == t.group_id), None)
+                        gname = g.name if g else "Sin grupo"
+                    results.append((t, gname))
+            if not results:
+                self.notify(f"No se encontraron tareas para '{query}'")
+            elif len(results) == 1:
+                self._go_to_task(results[0][0])
+            else:
+                self.push_screen(SearchResultsScreen(results, query), lambda t: self._go_to_task(t) if t else None)
+        self.push_screen(InputModal("🔍 Buscar", placeholder="Buscar tareas..."), on_input)
+    
+    # Groups
     def action_new_group(self) -> None:
-        """Crea un nuevo grupo."""
-        async def on_result(result: Optional[str]) -> None:
-            if result:
-                group = Group(id=self.next_group_id, name=result)
+        if self.calendar_mode: return
+        async def on_result(name: Optional[str]) -> None:
+            if name:
+                g = Group(id=self.next_group_id, name=name)
                 self.next_group_id += 1
-                self.groups.append(group)
-                self.current_group_id = group.id
+                self.groups.append(g)
+                self.current_group_id = g.id
                 self.selected_index = 0
                 await self.refresh_tabs()
-                await self.refresh_task_list()
+                await self.refresh_view()
                 self.update_stats()
                 self.save_data()
-        
-        self.push_screen(InputModal("Nuevo Grupo", placeholder="Nombre del grupo..."), on_result)
+        self.push_screen(InputModal("Nuevo Grupo", placeholder="Nombre..."), on_result)
     
     def action_group_options(self) -> None:
-        """Muestra opciones del grupo actual."""
-        if self.current_group_id is None:
-            return
-        
-        group = next((g for g in self.groups if g.id == self.current_group_id), None)
-        if not group:
-            return
-        
-        async def on_option(option: str) -> None:
-            if option == "rename":
-                await self._rename_group(group)
-            elif option == "delete":
-                await self._delete_group(group)
-        
-        self.push_screen(GroupOptionsModal(group.name), on_option)
-    
-    async def _rename_group(self, group: Group) -> None:
-        """Renombra un grupo."""
-        def on_result(result: Optional[str]) -> None:
-            if result:
-                group.name = result
-                self.call_later(self._after_rename)
-        
-        self.push_screen(InputModal("Renombrar Grupo", initial_text=group.name), on_result)
+        if self.calendar_mode or self.current_group_id is None: return
+        g = next((x for x in self.groups if x.id == self.current_group_id), None)
+        if not g: return
+        async def on_opt(opt: str) -> None:
+            if opt == "rename":
+                def on_name(name: Optional[str]) -> None:
+                    if name:
+                        g.name = name
+                        self.call_later(self._after_rename)
+                self.push_screen(InputModal("Renombrar", initial_text=g.name), on_name)
+            elif opt == "delete":
+                count = len([t for t in self.tasks if t.group_id == g.id])
+                async def on_confirm(yes: bool) -> None:
+                    if yes:
+                        self.tasks = [t for t in self.tasks if t.group_id != g.id]
+                        self.groups.remove(g)
+                        self.current_group_id = None
+                        self.selected_index = 0
+                        await self.refresh_tabs()
+                        await self.refresh_view()
+                        self.update_stats()
+                        self.save_data()
+                self.push_screen(ConfirmModal(f"¿Eliminar '{g.name}' y sus {count} tareas?"), on_confirm)
+        self.push_screen(GroupOptionsModal(g.name), on_opt)
     
     async def _after_rename(self) -> None:
         await self.refresh_tabs()
         self.update_stats()
         self.save_data()
     
-    async def _delete_group(self, group: Group) -> None:
-        """Elimina un grupo y sus tareas."""
-        task_count = len([t for t in self.tasks if t.group_id == group.id])
-        
-        async def on_confirm(confirmed: bool) -> None:
-            if confirmed:
-                self.tasks = [t for t in self.tasks if t.group_id != group.id]
-                self.groups.remove(group)
-                self.current_group_id = None
-                self.selected_index = 0
-                await self.refresh_tabs()
-                await self.refresh_task_list()
-                self.update_stats()
-                self.save_data()
-        
-        msg = f"¿Eliminar grupo '{group.name}' y sus {task_count} tareas?"
-        self.push_screen(ConfirmModal(msg), on_confirm)
-    
-    # Acciones de tareas
+    # Tasks
     def action_add_task(self) -> None:
-        """Abre el modal para añadir tarea."""
-        async def on_result(result: Optional[str]) -> None:
-            if result:
-                task = Task(
-                    id=self.next_task_id, 
-                    text=result,
-                    group_id=self.current_group_id
-                )
+        if self.calendar_mode: return
+        async def on_result(text: Optional[str]) -> None:
+            if text:
+                t = Task(id=self.next_task_id, text=text, group_id=self.current_group_id)
                 self.next_task_id += 1
-                self.tasks.append(task)
-                
-                current = self._get_current_tasks()
-                pending = [t for t in current if not t.done]
+                self.tasks.append(t)
+                pending = [x for x in self._get_current_tasks() if not x.done]
                 self.selected_index = len(pending) - 1
-                
-                await self.refresh_task_list()
+                await self.refresh_view()
                 self.update_stats()
                 self.save_data()
-        
-        group_name = ""
-        if self.current_group_id is not None:
-            group = next((g for g in self.groups if g.id == self.current_group_id), None)
-            if group:
-                group_name = f" en '{group.name}'"
-        
-        self.push_screen(InputModal(f"Nueva Tarea{group_name}", placeholder="Escribe la tarea..."), on_result)
+        self.push_screen(InputModal("Nueva Tarea", placeholder="Escribe la tarea..."), on_result)
     
     def action_edit_task(self) -> None:
-        """Abre el modal para editar tarea."""
-        widget = self.get_selected_task_widget()
-        if not widget:
-            return
-        
-        def on_result(result: Optional[str]) -> None:
-            if result and widget:
-                widget.update_text(result)
+        if self.calendar_mode: return
+        w = self.get_selected_widget()
+        if not w: return
+        t = w.task_data
+        async def on_result(result: Optional[dict]) -> None:
+            if result:
+                t.text = result["text"]
+                t.due_date = result["date"]
                 self.save_data()
-        
-        self.push_screen(
-            InputModal("Editar Tarea", initial_text=widget.task_data.text),
-            on_result
-        )
+                await self.refresh_view()
+        self.push_screen(EditTaskModal(t.text, t.due_date), on_result)
     
     def action_delete_task(self) -> None:
-        """Elimina la tarea seleccionada."""
+        if self.calendar_mode: return
         ordered = self._get_ordered_tasks()
-        if not ordered:
-            return
-        
-        task = ordered[self.selected_index]
-        
-        async def on_result(confirmed: bool) -> None:
-            if confirmed:
-                self.tasks.remove(task)
+        if not ordered: return
+        t = ordered[self.selected_index]
+        async def on_confirm(yes: bool) -> None:
+            if yes:
+                self.tasks.remove(t)
                 if self.selected_index >= len(self._get_ordered_tasks()) and self.selected_index > 0:
                     self.selected_index -= 1
-                await self.refresh_task_list()
+                await self.refresh_view()
                 self.update_stats()
                 self.save_data()
-        
-        text = task.text[:30] + "..." if len(task.text) > 30 else task.text
-        self.push_screen(ConfirmModal(f"¿Eliminar '{text}'?"), on_result)
+        txt = t.text[:30] + "..." if len(t.text) > 30 else t.text
+        self.push_screen(ConfirmModal(f"¿Eliminar '{txt}'?"), on_confirm)
     
-    async def action_toggle_done(self) -> None:
-        """Alterna el estado de completado."""
-        widget = self.get_selected_task_widget()
-        if widget:
-            widget.toggle_done()
-            self.update_stats()
-            self.save_data()
-            await self.refresh_task_list()
-    
-    def action_move_up(self) -> None:
-        """Mueve la selección arriba."""
-        ordered = self._get_ordered_tasks()
-        if ordered and self.selected_index > 0:
-            self.selected_index -= 1
-            self.update_selection()
-    
-    def action_move_down(self) -> None:
-        """Mueve la selección abajo."""
-        ordered = self._get_ordered_tasks()
-        if ordered and self.selected_index < len(ordered) - 1:
-            self.selected_index += 1
-            self.update_selection()
-    
-    # Persistencia
+    # Persistence
     def save_data(self) -> None:
-        """Guarda los datos en disco."""
         data = {
             "next_task_id": self.next_task_id,
             "next_group_id": self.next_group_id,
-            "groups": [
-                {"id": g.id, "name": g.name}
-                for g in self.groups
-            ],
-            "tasks": [
-                {
-                    "id": t.id, 
-                    "text": t.text, 
-                    "done": t.done, 
-                    "created_at": t.created_at,
-                    "group_id": t.group_id
-                }
-                for t in self.tasks
-            ]
+            "groups": [{"id": g.id, "name": g.name} for g in self.groups],
+            "tasks": [{"id": t.id, "text": t.text, "done": t.done, "created_at": t.created_at,
+                       "group_id": t.group_id, "due_date": t.due_date} for t in self.tasks]
         }
-        try:
-            self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-        except Exception:
-            pass
+        try: self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        except: pass
     
     def load_data(self) -> None:
-        """Carga los datos desde disco."""
         try:
             if self.data_file.exists():
                 data = json.loads(self.data_file.read_text())
                 self.next_task_id = data.get("next_task_id", 1)
                 self.next_group_id = data.get("next_group_id", 1)
-                
-                self.groups = [
-                    Group(id=g["id"], name=g["name"])
-                    for g in data.get("groups", [])
-                ]
-                
-                self.tasks = [
-                    Task(
-                        id=t["id"], 
-                        text=t["text"], 
-                        done=t.get("done", False),
-                        created_at=t.get("created_at", ""),
-                        group_id=t.get("group_id")
-                    )
-                    for t in data.get("tasks", [])
-                ]
-        except Exception:
-            self.tasks = []
-            self.groups = []
-            self.next_task_id = 1
-            self.next_group_id = 1
+                self.groups = [Group(id=g["id"], name=g["name"]) for g in data.get("groups", [])]
+                self.tasks = [Task(id=t["id"], text=t["text"], done=t.get("done", False),
+                                   created_at=t.get("created_at", ""), group_id=t.get("group_id"),
+                                   due_date=t.get("due_date")) for t in data.get("tasks", [])]
+        except:
+            self.tasks, self.groups = [], []
+            self.next_task_id = self.next_group_id = 1
 
 
 def main():
-    app = TodoApp()
-    app.run()
+    TodoApp().run()
 
 
 if __name__ == "__main__":
