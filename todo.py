@@ -1,19 +1,59 @@
 #!/usr/bin/env python3
 """
-TODO App - Aplicación de tareas para terminal con grupos y calendario
-Controles:
-  a - Añadir tarea
-  e - Editar tarea (incluye opción de fecha y grupo)
+TODO App - Aplicación de tareas para terminal con grupos, calendario, etiquetas y filtros
+Controles principales:
+  a - Añadir tarea (no disponible en grupo General)
+  e - Editar tarea (texto, fecha, grupo, comentarios, etiquetas)
   d - Eliminar tarea
-  g - Crear nuevo grupo
-  G - Editar/Eliminar grupo
-  c - Modo calendario
-  ←/→/↑/↓ - Navegar días (calendario) / tareas y grupos (normal)
-  Tab - Cambiar mes (calendario)
-  Enter - Ver tareas del día (calendario)
-  Espacio - Ir al grupo de la tarea (desde tareas del día)
-  t - Ir a hoy (calendario)
+  f - Filtrar tareas (por fecha, etiquetas y estado)
+  / - Buscar tareas por texto
+  i - Ver tareas de hoy
+  Espacio - Marcar/Desmarcar tarea como completada
   q - Salir
+
+Gestión de grupos:
+  g - Crear nuevo grupo
+  G - Editar/Eliminar grupo (no disponible en General ni Sin grupo)
+  ←/→ o h/l - Navegar entre grupos
+  Tab: General → Sin grupo → Grupos personalizados
+
+Grupos especiales:
+  📚 General - Muestra TODAS las tareas (sin permitir crear nuevas)
+  📋 Sin grupo - Tareas sin grupo asignado
+
+Gestión de etiquetas:
+  T - Gestionar etiquetas globales (crear, editar, eliminar)
+  (Las etiquetas se asignan desde la edición de tareas)
+
+Modo calendario:
+  c - Activar/Desactivar modo calendario
+  ←/→/↑/↓ - Navegar días
+  n/p - Mes siguiente/anterior
+  t - Ir a hoy
+  Enter - Ver tareas del día seleccionado
+  Espacio - Ir al grupo de la tarea (desde vista de tareas del día)
+
+Navegación de tareas:
+  ↑/↓ o k/j - Navegar entre tareas
+  Enter - Marcar/Desmarcar como completada (modo normal)
+
+Filtros disponibles:
+  📅 Fecha - Todas, Sin fecha, o fecha específica
+  🏷️ Etiquetas - Múltiples etiquetas (modo AND)
+  ✅ Estado - Todas, Pendientes, Completadas
+
+Características:
+  • Auto-guardado cada 10 segundos
+  • Guardado automático al salir
+  • Recordatorios de tareas que vencen hoy
+  • Comentarios en tareas
+  • Hasta 2 etiquetas visibles por tarea
+  • Visualización de fecha de vencimiento
+  • Contador de comentarios
+  • Separación visual de tareas completadas
+  • Estadísticas en tiempo real
+  • Búsqueda global de tareas
+  • Tema Dracula por defecto
 """
 
 from textual.app import App, ComposeResult
@@ -153,7 +193,7 @@ class TaskWidget(Static):
         self.set_class(self.task_data.done, "done")
         self.query_one(".checkbox", Label).update("☑" if self.task_data.done else "☐")
     
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         if self.task_data.done:
             self.add_class("done")
     
@@ -223,6 +263,81 @@ class InputModal(ModalScreen[Optional[str]]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+class ReminderModal(ModalScreen[bool]):
+    """Modal para recordatorio de tarea que vence hoy"""
+    DEFAULT_CSS = """
+    ReminderModal { align: center middle; }
+    ReminderModal > Container {
+        width: 50; height: auto; max-height: 20; border: thick $warning;
+        background: $surface; padding: 1 2;
+    }
+    ReminderModal .modal-title { 
+        text-align: center; text-style: bold; 
+        width: 100%; height: auto;
+        color: $warning;
+        margin-bottom: 1;
+    }
+    ReminderModal .task-info {
+        width: 100%; height: auto;
+        padding: 1;
+        background: $surface-lighten-1;
+        border: solid $primary-background;
+        margin-bottom: 1;
+    }
+    ReminderModal .task-text { 
+        width: 100%; height: auto;
+        text-align: center;
+        margin: 0 0 1 0;
+    }
+    ReminderModal .group-info {
+        width: 100%; height: auto;
+        text-align: center;
+        color: $text-muted;
+        margin-bottom: 0;
+    }
+    ReminderModal .button-row { 
+        width: 100%; height: auto; 
+        align: center middle;
+        margin-top: 1;
+    }
+    ReminderModal Button { margin: 0 1; }
+    """
+    
+    # CRÍTICO: Capturar TODOS los eventos de teclado para evitar que pasen a la app principal
+    BINDINGS = [
+        Binding("escape", "close", show=False),
+        Binding("enter", "close", show=False),
+        Binding("space", "close", show=False),  # Añadido para evitar toggle_done
+    ]
+    
+    def __init__(self, task: Task, group_name: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.task_data = task
+        self.group_name = group_name
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("⏰ Recordatorio de Tarea", classes="modal-title")
+            with Container(classes="task-info"):
+                yield Label("La siguiente tarea vence HOY:", classes="group-info")
+                yield Label(self.task_data.text, classes="task-text")
+                yield Label(f"📁 Grupo: {self.group_name}", classes="group-info")
+            with Horizontal(classes="button-row"):
+                yield Button("Entendido", variant="primary", id="ok")
+    
+    @on(Button.Pressed, "#ok")
+    def on_ok(self) -> None:
+        self.dismiss(True)
+    
+    def action_close(self) -> None:
+        self.dismiss(True)
+    
+    # CRÍTICO: Consumir eventos de teclado para que NO lleguen a la app principal
+    def on_key(self, event) -> None:
+        """Consumir todos los eventos de teclado excepto los bindings definidos"""
+        if event.key not in ["escape", "enter", "space"]:
+            event.prevent_default()
+            event.stop()
 
 class GroupPickerModal(ModalScreen[Optional[int]]):
     """Modal para seleccionar un grupo"""
@@ -717,9 +832,108 @@ class TagPickerModal(ModalScreen[list[int]]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+class StatusFilterPickerModal(ModalScreen[Optional[str]]):
+    """Modal para seleccionar filtro de estado"""
+    DEFAULT_CSS = """
+    StatusFilterPickerModal { align: center middle; }
+    StatusFilterPickerModal > Container {
+        width: 40; height: auto; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    StatusFilterPickerModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
+    StatusFilterPickerModal #status-list { width: 100%; height: auto; padding: 1; }
+    StatusFilterPickerModal .status-item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
+        content-align: center middle;
+    }
+    StatusFilterPickerModal .status-item:hover { background: $boost; }
+    StatusFilterPickerModal .status-item.selected { border: solid $accent; background: $surface-lighten-1; }
+    StatusFilterPickerModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
+    StatusFilterPickerModal .button-row { width: 100%; height: 3; align: center middle; }
+    StatusFilterPickerModal Button { margin: 0 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("enter", "select", show=False),
+    ]
+    
+    def __init__(self, current_filter: Optional[str], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.current_filter = current_filter
+        self.options = ["pending", "completed"]
+        self.selected_index = 0
+        if current_filter in self.options:
+            self.selected_index = self.options.index(current_filter)
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("✓ Filtrar por Estado", classes="modal-title")
+            yield Container(id="status-list")
+            yield Label("↑↓ Navegar | Enter: Seleccionar | Esc: Cancelar", classes="hint")
+            with Horizontal(classes="button-row"):
+                yield Button("Seleccionar", variant="primary", id="select")
+    
+    async def on_mount(self) -> None:
+        await self.refresh_list()
+    
+    async def refresh_list(self) -> None:
+        status_list = self.query_one("#status-list", Container)
+        await status_list.remove_children()
+        
+        options_display = [
+            ("⏳ Pendientes", "pending"),
+            ("✅ Completadas", "completed")
+        ]
+        
+        for i, (text, value) in enumerate(options_display):
+            item = Static(text, id=f"status-{i}", classes="status-item")
+            await status_list.mount(item)
+            if i == self.selected_index:
+                item.add_class("selected")
+    
+    def scroll_to_selected(self) -> None:
+        if self.selected_index >= 0:
+            try:
+                item = self.query_one(f"#status-{self.selected_index}", Static)
+                item.scroll_visible()
+            except: pass
+    
+    def update_selection(self) -> None:
+        for i in range(len(self.options)):
+            try:
+                item = self.query_one(f"#status-{i}", Static)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
+        self.scroll_to_selected()
+    
+    def action_move_up(self) -> None:
+        if self.options and self.selected_index > 0:
+            self.selected_index -= 1
+            self.update_selection()
+    
+    def action_move_down(self) -> None:
+        if self.options and self.selected_index < len(self.options) - 1:
+            self.selected_index += 1
+            self.update_selection()
+    
+    def action_select(self) -> None:
+        if self.options and self.selected_index >= 0:
+            self.dismiss(self.options[self.selected_index])
+    
+    @on(Button.Pressed, "#select")
+    def on_select_btn(self) -> None:
+        self.action_select()
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 class FilterModal(ModalScreen[Optional[dict]]):
-    """Modal para filtrar tareas por fecha o etiqueta"""
+    """Modal para filtrar tareas por fecha, etiquetas o estado"""
     DEFAULT_CSS = """
     FilterModal { align: center middle; }
     FilterModal > Container {
@@ -735,11 +949,13 @@ class FilterModal(ModalScreen[Optional[dict]]):
     """
     BINDINGS = [Binding("escape", "cancel", show=False)]
     
-    def __init__(self, current_date_filter: Optional[str], current_tag_filter: Optional[int],
-                 all_tags: list[Tag], available_dates: list[str], **kwargs) -> None:
+    def __init__(self, current_date_filter: Optional[str], current_tag_filters: list[int],
+                 current_status_filter: Optional[str], all_tags: list[Tag], 
+                 available_dates: list[str], **kwargs) -> None:
         super().__init__(**kwargs)
         self.date_filter = current_date_filter
-        self.tag_filter = current_tag_filter
+        self.tag_filters = list(current_tag_filters)
+        self.status_filter = current_status_filter
         self.all_tags = all_tags
         self.available_dates = available_dates
     
@@ -751,15 +967,19 @@ class FilterModal(ModalScreen[Optional[dict]]):
                 yield Label(self._format_date_filter(), id="date-display", classes="filter-display")
                 yield Button("📅 Cambiar", id="change-date")
                 yield Button("❌ Quitar", id="remove-date")
-            yield Label("Etiqueta:", classes="section-label")
+            yield Label("Etiquetas:", classes="section-label")
             with Horizontal(classes="filter-row"):
                 yield Label(self._format_tag_filter(), id="tag-display", classes="filter-display")
-                yield Button("🏷️ Cambiar", id="change-tag")
+                yield Button("🏷️ Seleccionar", id="change-tag")
                 yield Button("❌ Quitar", id="remove-tag")
+            yield Label("Estado:", classes="section-label")
+            with Horizontal(classes="filter-row"):
+                yield Label(self._format_status_filter(), id="status-display", classes="filter-display")
+                yield Button("✓ Cambiar", id="change-status")
+                yield Button("❌ Quitar", id="remove-status")
             with Horizontal(classes="button-row"):
                 yield Button("Aplicar", variant="primary", id="apply")
                 yield Button("Quitar todos", variant="warning", id="clear")
-                yield Button("Cancelar", variant="default", id="cancel")
     
     def _format_date_filter(self) -> str:
         if self.date_filter is None:
@@ -774,12 +994,25 @@ class FilterModal(ModalScreen[Optional[dict]]):
                 return "Todas las fechas"
     
     def _format_tag_filter(self) -> str:
-        if self.tag_filter is None:
+        if not self.tag_filters:
             return "Todas las etiquetas"
-        tag = next((t for t in self.all_tags if t.id == self.tag_filter), None)
-        if tag:
-            return f"🏷️ {tag.name}"
+        tag_names = []
+        for tag_id in self.tag_filters:
+            tag = next((t for t in self.all_tags if t.id == tag_id), None)
+            if tag:
+                tag_names.append(tag.name)
+        if tag_names:
+            return f"🏷️ {', '.join(tag_names)}"
         return "Todas las etiquetas"
+    
+    def _format_status_filter(self) -> str:
+        if self.status_filter is None:
+            return "Todas"
+        elif self.status_filter == "completed":
+            return "✅ Completadas"
+        elif self.status_filter == "pending":
+            return "⏳ Pendientes"
+        return "Todas"
     
     @on(Button.Pressed, "#change-date")
     def on_change_date(self) -> None:
@@ -796,32 +1029,40 @@ class FilterModal(ModalScreen[Optional[dict]]):
     
     @on(Button.Pressed, "#change-tag")
     def on_change_tag(self) -> None:
-        def on_result(result: Optional[int]) -> None:
+        def on_result(result: Optional[list[int]]) -> None:
             if result is not None:
-                self.tag_filter = result if result != -1 else None
+                self.tag_filters = result
                 self.query_one("#tag-display", Label).update(self._format_tag_filter())
-        self.app.push_screen(TagFilterPickerModal(self.all_tags, self.tag_filter), on_result)
+        self.app.push_screen(TagPickerModal(self.all_tags, self.tag_filters), on_result)
     
     @on(Button.Pressed, "#remove-tag")
     def on_remove_tag(self) -> None:
-        self.tag_filter = None
+        self.tag_filters = []
         self.query_one("#tag-display", Label).update(self._format_tag_filter())
+    
+    @on(Button.Pressed, "#change-status")
+    def on_change_status(self) -> None:
+        def on_result(result: Optional[str]) -> None:
+            if result is not None:
+                self.status_filter = result
+                self.query_one("#status-display", Label).update(self._format_status_filter())
+        self.app.push_screen(StatusFilterPickerModal(self.status_filter), on_result)
+    
+    @on(Button.Pressed, "#remove-status")
+    def on_remove_status(self) -> None:
+        self.status_filter = None
+        self.query_one("#status-display", Label).update(self._format_status_filter())
     
     @on(Button.Pressed, "#apply")
     def on_apply(self) -> None:
-        self.dismiss({"date": self.date_filter, "tag": self.tag_filter})
+        self.dismiss({"date": self.date_filter, "tags": self.tag_filters, "status": self.status_filter})
     
     @on(Button.Pressed, "#clear")
     def on_clear(self) -> None:
-        self.dismiss({"date": None, "tag": None})
-    
-    @on(Button.Pressed, "#cancel")
-    def on_cancel_btn(self) -> None:
-        self.dismiss(None)
+        self.dismiss({"date": None, "tags": [], "status": None})
     
     def action_cancel(self) -> None:
         self.dismiss(None)
-
 
 class DateFilterPickerModal(ModalScreen[Optional[str]]):
     """Modal para seleccionar filtro de fecha"""
@@ -931,117 +1172,6 @@ class DateFilterPickerModal(ModalScreen[Optional[str]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
-
-
-class TagFilterPickerModal(ModalScreen[Optional[int]]):
-    """Modal para seleccionar filtro de etiqueta"""
-    DEFAULT_CSS = """
-    TagFilterPickerModal { align: center middle; }
-    TagFilterPickerModal > Container {
-        width: 50; height: 26; border: thick $primary;
-        background: $surface; padding: 1 2;
-    }
-    TagFilterPickerModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
-    TagFilterPickerModal #tags-list { width: 100%; height: 12; overflow-y: auto; border: solid $primary-background; padding: 1; }
-    TagFilterPickerModal .tag-item {
-        width: 100%; height: 3; padding: 0 1;
-        border: solid $primary-background; margin-bottom: 1;
-    }
-    TagFilterPickerModal .tag-item:hover { background: $boost; }
-    TagFilterPickerModal .tag-item.selected { border: solid $accent; background: $surface-lighten-1; }
-    TagFilterPickerModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
-    TagFilterPickerModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
-    TagFilterPickerModal .button-row { width: 100%; height: 3; align: center middle; }
-    TagFilterPickerModal Button { margin: 0 1; }
-    """
-    BINDINGS = [
-        Binding("escape", "cancel", show=False),
-        Binding("up", "move_up", show=False),
-        Binding("down", "move_down", show=False),
-        Binding("k", "move_up", show=False),
-        Binding("j", "move_down", show=False),
-        Binding("enter", "select", show=False),
-    ]
-    
-    def __init__(self, all_tags: list[Tag], current_filter: Optional[int], **kwargs) -> None:
-        super().__init__(**kwargs)
-        self.all_tags = all_tags
-        self.current_filter = current_filter
-        self.selected_index = 0
-        if current_filter is not None:
-            for i, tag in enumerate(all_tags):
-                if tag.id == current_filter:
-                    self.selected_index = i
-                    break
-    
-    def compose(self) -> ComposeResult:
-        with Container():
-            yield Label("🏷️ Filtrar por Etiqueta", classes="modal-title")
-            yield Container(id="tags-list")
-            yield Label("↑↓ Navegar | Enter: Seleccionar | Esc: Cancelar", classes="hint")
-            with Horizontal(classes="button-row"):
-                yield Button("Seleccionar", variant="primary", id="select")
-                yield Button("Cancelar", variant="default", id="cancel")
-    
-    async def on_mount(self) -> None:
-        await self.refresh_list()
-    
-    async def refresh_list(self) -> None:
-        tags_list = self.query_one("#tags-list", Container)
-        await tags_list.remove_children()
-        
-        if not self.all_tags:
-            await tags_list.mount(Label("No hay etiquetas disponibles", classes="empty-msg"))
-            self.selected_index = -1
-        else:
-            for i, tag in enumerate(self.all_tags):
-                item = Static(f"🏷️ {tag.name}", id=f"tag-{i}", classes="tag-item")
-                await tags_list.mount(item)
-                if i == self.selected_index:
-                    item.add_class("selected")
-    
-    def scroll_to_selected(self) -> None:
-        if self.selected_index >= 0:
-            try:
-                item = self.query_one(f"#tag-{self.selected_index}", Static)
-                item.scroll_visible()
-            except: pass
-    
-    def update_selection(self) -> None:
-        for i in range(len(self.all_tags)):
-            try:
-                item = self.query_one(f"#tag-{i}", Static)
-                item.set_class(i == self.selected_index, "selected")
-            except: pass
-        self.scroll_to_selected()
-    
-    def action_move_up(self) -> None:
-        if self.all_tags and self.selected_index > 0:
-            self.selected_index -= 1
-            self.update_selection()
-    
-    def action_move_down(self) -> None:
-        if self.all_tags and self.selected_index < len(self.all_tags) - 1:
-            self.selected_index += 1
-            self.update_selection()
-    
-    def action_select(self) -> None:
-        if self.all_tags and self.selected_index >= 0:
-            self.dismiss(self.all_tags[self.selected_index].id)
-        else:
-            self.dismiss(-1)
-    
-    @on(Button.Pressed, "#select")
-    def on_select_btn(self) -> None:
-        self.action_select()
-    
-    @on(Button.Pressed, "#cancel")
-    def on_cancel_btn(self) -> None:
-        self.dismiss(None)
-    
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
 
 class EditTaskModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
@@ -1462,9 +1592,12 @@ class DayTasksModal(ModalScreen[Optional[Task]]):
     DayTasksModal .task-item {
         width: 100%; height: 3; padding: 0 1;
         border: solid $primary-background; margin-bottom: 1;
+        layout: horizontal;
     }
     DayTasksModal .task-item:hover { background: $boost; }
     DayTasksModal .task-item.selected { border: solid $accent; background: $surface-lighten-1; }
+    DayTasksModal .task-main { width: 1fr; height: 1; }
+    DayTasksModal .task-group { width: auto; height: 1; text-align: right; color: $text-muted; }
     DayTasksModal .hint { width: 100%; text-align: center; color: $text-muted; margin-top: 1; }
     DayTasksModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
     """
@@ -1497,16 +1630,22 @@ class DayTasksModal(ModalScreen[Optional[Task]]):
         else:
             for i, (task, group_name) in enumerate(self.tasks):
                 checkbox = "☑" if task.done else "☐"
-                text = f"{checkbox} {task.text}  [{group_name}]"
-                item = Static(text, id=f"task-item-{i}", classes="task-item")
+                item = Horizontal(id=f"task-item-{i}", classes="task-item")
                 await tasks_list.mount(item)
+                
+                # Texto de la tarea (lado izquierdo)
+                await item.mount(Label(f"{checkbox} {task.text}", classes="task-main"))
+                
+                # Grupo (lado derecho)
+                await item.mount(Label(f"Grupo: {group_name}", classes="task-group"))
+                
                 if i == 0:
                     item.add_class("selected")
     
     def update_selection(self) -> None:
         for i in range(len(self.tasks)):
             try:
-                item = self.query_one(f"#task-item-{i}", Static)
+                item = self.query_one(f"#task-item-{i}", Horizontal)
                 item.set_class(i == self.selected_index, "selected")
             except: pass
     
@@ -1678,6 +1817,7 @@ class TodoApp(App):
         Binding("G", "group_options", "Opc. Grupo"),
         Binding("T", "manage_tags", "Etiquetas"),
         Binding("c", "toggle_calendar", "Calendario"),
+        Binding("i", "today_tasks", "Hoy"),  # NUEVO
         Binding("/", "search", "Buscar"),
         Binding("left", "nav_left", show=False),
         Binding("right", "nav_right", show=False),
@@ -1696,6 +1836,7 @@ class TodoApp(App):
     ]
     
     TITLE = "📋 TODO App"
+    theme = "dracula"
     
     def __init__(self) -> None:
         super().__init__()
@@ -1706,7 +1847,8 @@ class TodoApp(App):
         self.next_group_id = 1
         self.next_tag_id = 1
         self.selected_index = 0
-        self.current_group_id: Optional[int] = None
+        self.GENERAL_GROUP_ID = -1
+        self.current_group_id: Optional[int] = self.GENERAL_GROUP_ID
         self.data_file = Path.home() / "todo" / "todo_tasks.json"
         self.data_file.parent.mkdir(exist_ok=True)
         
@@ -1715,12 +1857,12 @@ class TodoApp(App):
         self.cal_month = date.today().month
         self.cal_day = date.today().day
         
-        # Filtros
-        self.filter_date: Optional[str] = None  # None=todos, "none"=sin fecha, "YYYY-MM-DD"=fecha específica
-        self.filter_tag_id: Optional[int] = None  # None=todos, ID=etiqueta específica
+        self.filter_date: Optional[str] = None
+        self.filter_tag_ids: list[int] = []
+        self.filter_status: Optional[str] = None  # NUEVO: None, "completed", "pending"
         
         self.load_data()
-    
+        
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="main-container"):
@@ -1738,6 +1880,49 @@ class TodoApp(App):
         await self.refresh_tabs()
         await self.refresh_view()
         self.update_stats()
+        # Mostrar recordatorios después de que la UI esté lista
+        self.set_timer(0.1, self.show_today_reminders)
+        # Auto-guardar cada 10 segundos como backup
+        self.set_interval(10, self.save_data)
+
+    def on_exit(self) -> None:
+        """Guardar datos al salir de la aplicación"""
+        self.save_data()
+
+    def action_today_tasks(self) -> None:
+        """Ver tareas de hoy"""
+        today = date.today()
+        tasks = self._get_tasks_for_date(today.year, today.month, today.day)
+        date_str = f"{today.day}/{today.month}/{today.year}"
+        self.push_screen(DayTasksModal(tasks, date_str), lambda t: self._go_to_task(t) if t else None)
+    
+    def show_today_reminders(self) -> None:
+        """Mostrar recordatorios de tareas que vencen hoy"""
+        today_str = date.today().strftime("%Y-%m-%d")
+        today_tasks = []
+        
+        # Buscar todas las tareas que vencen hoy y no están completadas
+        for task in self.tasks:
+            if task.due_date == today_str and not task.done:
+                # Obtener el nombre del grupo
+                if task.group_id is None:
+                    group_name = "Sin grupo"
+                else:
+                    group = next((g for g in self.groups if g.id == task.group_id), None)
+                    group_name = group.name if group else "Sin grupo"
+                today_tasks.append((task, group_name))
+        
+        # Mostrar un modal por cada tarea que vence hoy
+        # Usar callback para asegurar que se cierra antes del siguiente
+        def show_next(index=0):
+            if index < len(today_tasks):
+                task, group_name = today_tasks[index]
+                def on_close(result):
+                    # Mostrar el siguiente recordatorio cuando se cierre este
+                    show_next(index + 1)
+                self.push_screen(ReminderModal(task, group_name), on_close)
+        
+        show_next()
     
     async def refresh_tabs(self) -> None:
         tabs = self.query_one("#tabs-container", Horizontal)
@@ -1748,10 +1933,17 @@ class TodoApp(App):
             await tabs.mount(tab)
             tab.active = True
         else:
+            # Tab General (todas las tareas)
+            tab = GroupTab(self.GENERAL_GROUP_ID, "📚 General", id="tab-general")
+            await tabs.mount(tab)
+            tab.active = (self.current_group_id == self.GENERAL_GROUP_ID)
+            
+            # Tab Sin grupo
             tab = GroupTab(None, "📋 Sin grupo", id="tab-all")
             await tabs.mount(tab)
             tab.active = (self.current_group_id is None)
             
+            # Tabs de grupos
             for g in self.groups:
                 icon = "📂" if self.current_group_id == g.id else "📁"
                 t = GroupTab(g.id, f"{icon} {g.name}", id=f"tab-{g.id}")
@@ -1759,8 +1951,10 @@ class TodoApp(App):
                 t.active = (self.current_group_id == g.id)
     
     def _get_current_tasks(self) -> list[Task]:
-        # Primero filtrar por grupo
-        if self.current_group_id is None:
+        # Filtrar por grupo
+        if self.current_group_id == self.GENERAL_GROUP_ID:
+            tasks = list(self.tasks)
+        elif self.current_group_id is None:
             tasks = [t for t in self.tasks if t.group_id is None]
         else:
             tasks = [t for t in self.tasks if t.group_id == self.current_group_id]
@@ -1772,9 +1966,15 @@ class TodoApp(App):
             else:
                 tasks = [t for t in tasks if t.due_date == self.filter_date]
         
-        # Aplicar filtro de etiqueta
-        if self.filter_tag_id is not None:
-            tasks = [t for t in tasks if self.filter_tag_id in t.tags]
+        # Aplicar filtro de etiquetas
+        if self.filter_tag_ids:
+            tasks = [t for t in tasks if all(tag_id in t.tags for tag_id in self.filter_tag_ids)]
+        
+        # Aplicar filtro de estado (NUEVO)
+        if self.filter_status == "completed":
+            tasks = [t for t in tasks if t.done]
+        elif self.filter_status == "pending":
+            tasks = [t for t in tasks if not t.done]
         
         return tasks
     
@@ -1864,7 +2064,10 @@ class TodoApp(App):
             for t, gname in tasks[:3]:
                 cb = "☑" if t.done else "☐"
                 txt = t.text[:30] + "..." if len(t.text) > 30 else t.text
-                lines.append(f"  {cb} {txt} [{gname}]")
+                group_text = f"Grupo: {gname}"
+                # Espacios para alinear
+                padding = " " * max(1, 50 - len(txt) - len(group_text))
+                lines.append(f"  {cb} {txt}{padding}{group_text}")
             if len(tasks) > 3:
                 lines.append(f"  ... y {len(tasks) - 3} más")
             day_tasks.update("\n".join(lines))
@@ -1904,10 +2107,15 @@ class TodoApp(App):
         else:
             c = self._get_current_tasks()
             total, done = len(c), sum(1 for t in c if t.done)
-            gname = "Sin grupo"
-            if self.current_group_id:
+            
+            if self.current_group_id == self.GENERAL_GROUP_ID:
+                gname = "General"
+            elif self.current_group_id is None:
+                gname = "Sin grupo"
+            else:
                 g = next((x for x in self.groups if x.id == self.current_group_id), None)
                 gname = g.name if g else "Sin grupo"
+            
             text = f"Total: {total} | Completadas: {done} | Pendientes: {total - done} | Grupo: {gname}"
             
             # Mostrar filtros activos
@@ -1920,10 +2128,19 @@ class TodoApp(App):
                         d = datetime.strptime(self.filter_date, "%Y-%m-%d")
                         filters.append(f"📅 {d.day:02d}/{d.month:02d}")
                     except: pass
-            if self.filter_tag_id is not None:
-                tag = next((t for t in self.tags if t.id == self.filter_tag_id), None)
-                if tag:
-                    filters.append(f"🏷️ {tag.name}")
+            if self.filter_tag_ids:
+                tag_names = []
+                for tag_id in self.filter_tag_ids:
+                    tag = next((t for t in self.tags if t.id == tag_id), None)
+                    if tag:
+                        tag_names.append(tag.name)
+                if tag_names:
+                    filters.append(f"🏷️ {', '.join(tag_names)}")
+            # NUEVO: Mostrar filtro de estado
+            if self.filter_status == "completed":
+                filters.append("✅ Completadas")
+            elif self.filter_status == "pending":
+                filters.append("⏳ Pendientes")
             if filters:
                 text += " | Filtros: " + ", ".join(filters)
         self.query_one("#stats", Static).update(text)
@@ -1933,6 +2150,11 @@ class TodoApp(App):
         if not ordered or self.selected_index >= len(ordered): return None
         try: return self.query_one(f"#task-{ordered[self.selected_index].id}", TaskWidget)
         except: return None
+    
+    def action_quit(self) -> None:
+        """Guardar datos antes de salir"""
+        self.save_data()
+        self.exit()
     
     # Navigation
     async def action_nav_left(self) -> None:
@@ -2002,25 +2224,25 @@ class TodoApp(App):
             self.update_stats()
     
     async def _prev_group(self) -> None:
-        ids = [None] + [g.id for g in self.groups]
+        ids = [self.GENERAL_GROUP_ID, None] + [g.id for g in self.groups]
         idx = (ids.index(self.current_group_id) - 1) % len(ids)
         self.current_group_id = ids[idx]
         self.selected_index = 0
-        # Resetear filtros al cambiar de grupo
         self.filter_date = None
-        self.filter_tag_id = None
+        self.filter_tag_ids = []
+        self.filter_status = None
         await self.refresh_tabs()
         await self.refresh_view()
         self.update_stats()
-    
+
     async def _next_group(self) -> None:
-        ids = [None] + [g.id for g in self.groups]
+        ids = [self.GENERAL_GROUP_ID, None] + [g.id for g in self.groups]
         idx = (ids.index(self.current_group_id) + 1) % len(ids)
         self.current_group_id = ids[idx]
         self.selected_index = 0
-        # Resetear filtros al cambiar de grupo
         self.filter_date = None
-        self.filter_tag_id = None
+        self.filter_tag_ids = []
+        self.filter_status = None
         await self.refresh_tabs()
         await self.refresh_view()
         self.update_stats()
@@ -2047,8 +2269,8 @@ class TodoApp(App):
             w = self.get_selected_widget()
             if w:
                 w.toggle_done()
-                self.update_stats()
                 self.save_data()
+                self.update_stats()
                 await self.refresh_view()
     
     def _go_to_task(self, task: Task) -> None:
@@ -2089,21 +2311,25 @@ class TodoApp(App):
     # Filter
     def action_filter_tasks(self) -> None:
         if self.calendar_mode: return
-        # Obtener fechas disponibles en el grupo actual (sin filtros aplicados)
-        if self.current_group_id is None:
+        
+        if self.current_group_id == self.GENERAL_GROUP_ID:
+            group_tasks = list(self.tasks)
+        elif self.current_group_id is None:
             group_tasks = [t for t in self.tasks if t.group_id is None]
         else:
             group_tasks = [t for t in self.tasks if t.group_id == self.current_group_id]
+        
         available_dates = [t.due_date for t in group_tasks if t.due_date]
         
         async def on_result(result: Optional[dict]) -> None:
             if result is not None:
                 self.filter_date = result.get("date")
-                self.filter_tag_id = result.get("tag")
+                self.filter_tag_ids = result.get("tags", [])
+                self.filter_status = result.get("status")  # NUEVO
                 self.selected_index = 0
                 await self.refresh_view()
                 self.update_stats()
-        self.push_screen(FilterModal(self.filter_date, self.filter_tag_id, self.tags, available_dates), on_result)
+        self.push_screen(FilterModal(self.filter_date, self.filter_tag_ids, self.filter_status, self.tags, available_dates), on_result)
     
     # Groups
     def action_new_group(self) -> None:
@@ -2122,7 +2348,8 @@ class TodoApp(App):
         self.push_screen(InputModal("Nuevo Grupo", placeholder="Nombre..."), on_result)
     
     def action_group_options(self) -> None:
-        if self.calendar_mode or self.current_group_id is None: return
+        if self.calendar_mode or self.current_group_id is None or self.current_group_id == self.GENERAL_GROUP_ID:
+            return
         g = next((x for x in self.groups if x.id == self.current_group_id), None)
         if not g: return
         async def on_opt(opt: str) -> None:
@@ -2176,6 +2403,12 @@ class TodoApp(App):
     # Tasks
     def action_add_task(self) -> None:
         if self.calendar_mode: return
+        
+        # Bloquear creación de tareas en General
+        if self.current_group_id == self.GENERAL_GROUP_ID:
+            self.notify("❌ No se pueden crear tareas en General. Cambia a un grupo específico.", severity="warning", timeout=3)
+            return
+        
         async def on_result(text: Optional[str]) -> None:
             if text:
                 t = Task(id=self.next_task_id, text=text, group_id=self.current_group_id)
