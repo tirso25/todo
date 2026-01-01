@@ -364,7 +364,7 @@ Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) par
 
 **Tirso**
 
-- GitHub: [@tirso](https://github.com/tirso)
+- GitHub: [@tirso]([https://github.com/tirso](https://github.com/tirso25))
 
 <div align="center">
 
