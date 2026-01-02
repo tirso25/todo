@@ -1,4 +1,4 @@
-# 📋 TODO App - Gestor de Tareas para Terminal
+# 📋 MyTaskit - Gestor de Tareas para Terminal
 
 <div align="center">
 
