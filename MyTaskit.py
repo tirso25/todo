@@ -183,9 +183,9 @@ class TaskWidget(Static):
         
         priority_icons = {
             0: "  ",
-            1: "[green]⬇[/green]",
+            1: "[green]■[/green]",
             2: "[yellow]■[/yellow]",
-            3: "[red]⬆[/red]"
+            3: "[red]■[/red]"
         }
         priority_icon = priority_icons.get(self.task_data.priority, "  ")
         yield Label(priority_icon, classes="priority")
@@ -299,9 +299,9 @@ class PriorityPickerModal(ModalScreen[Optional[int]]):
         
         priorities = [
             ("   Sin prioridad", 0),
-            ("[green]⬇[/green]  Baja", 1),
+            ("[green]■[/green]  Baja", 1),
             ("[yellow]■[/yellow]  Media", 2),
-            ("[red]⬆[/red]  Alta", 3)
+            ("[red]■[/red]  Alta", 3)
         ]
         
         for i, (text, value) in enumerate(priorities):
@@ -788,23 +788,23 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
     DEFAULT_CSS = """
     TagsManagerModal { align: center middle; }
     TagsManagerModal > Container {
-        width: 60; height: 22; border: thick $primary;
+        width: 60; height: 28; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     TagsManagerModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
-    TagsManagerModal #tags-list { width: 100%; height: 10; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    TagsManagerModal #tags-list { width: 100%; height: 16; overflow-y: auto; border: solid $primary-background; padding: 1; }
     TagsManagerModal .tag-item {
         width: 100%; height: 3; padding: 0 1;
         border: solid $primary-background; margin-bottom: 1;
     }
     TagsManagerModal .tag-item:hover { background: $boost; }
     TagsManagerModal .tag-item.selected { border: solid $accent; background: $surface-lighten-1; }
-    TagsManagerModal .tag-preview { background: #90EE90; color: #000000; padding: 0 1; }
     TagsManagerModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
     TagsManagerModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
     TagsManagerModal .button-row { width: 100%; height: 3; align: center middle; }
     TagsManagerModal Button { margin: 0 1; }
     """
+    
     BINDINGS = [
         Binding("escape", "close", show=False),
         Binding("up", "move_up", show=False),
@@ -1142,7 +1142,7 @@ class StatusFilterPickerModal(ModalScreen[Optional[list[str]]]):
             self.selected_status_ids.remove(status_id)
         else:
             self.selected_status_ids.append(status_id)
-        self.call_later(self.refresh_list)
+        self.call_later(self.refresh_list) 
     
     def action_save(self) -> None:
         self.dismiss(self.selected_status_ids)
@@ -1209,9 +1209,9 @@ class PriorityFilterPickerModal(ModalScreen[Optional[list[int]]]):
         
         priorities = [
             ("   Sin prioridad", 0),
-            ("[green]⬇[/green]  Baja", 1),
+            ("[green]■[/green]  Baja", 1),
             ("[yellow]■[/yellow]  Media", 2),
-            ("[red]⬆[/red]  Alta", 3)
+            ("[red]■[/red]  Alta", 3)
         ]
         
         for i, (text, value) in enumerate(priorities):
@@ -1367,7 +1367,7 @@ class FilterModal(ModalScreen[Optional[dict]]):
     def _format_priority_filter(self) -> str:
         if not self.priority_filters:
             return "Todas las prioridades"
-        priority_names = {0: "Sin prioridad", 1: "⬇ Baja", 2: "■ Media", 3: "⬆ Alta"}
+        priority_names = {0: "Sin prioridad", 1: "■ Baja", 2: "■ Media", 3: "■ Alta"}
         priority_strs = [priority_names.get(p, '') for p in self.priority_filters]
         return f"⭐ {', '.join(priority_strs)}" if priority_strs else "Todas las prioridades"
     
@@ -1648,9 +1648,9 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     def _format_priority(self) -> str:
         priority_names = {
             0: "Sin prioridad",
-            1: "⬇ Baja",
+            1: "■ Baja",
             2: "■ Media",
-            3: "⬆ Alta"
+            3: "■ Alta"
         }
         return priority_names.get(self.selected_priority, "Sin prioridad")
     
@@ -2378,6 +2378,15 @@ class SortPickerModal(ModalScreen[Optional[dict[str, Optional[str]]]]):
 class TodoApp(App):
     CSS = """
     Screen { background: $background; }
+    Header {
+        background: #1e1e1e;
+        color: #00ff00;  /* Verde terminal */
+    }
+    Header .header--title {
+        color: #00ff00;
+        text-style: bold;
+    }
+    #main-container { width: 100%; height: 1fr; padding: 0 2; }
     #main-container { width: 100%; height: 1fr; padding: 0 2; }
     #tabs-container { width: 100%; height: 3; layout: horizontal; padding: 0 1; }
     #task-list { width: 100%; height: 1fr; overflow-y: auto; padding: 1; }
@@ -2420,7 +2429,7 @@ class TodoApp(App):
         Binding("q", "quit", "Salir"),
     ]
     
-    TITLE = "📋 TODO App"
+    TITLE = "MyTaskit"
     theme = "dracula"
     
     def __init__(self) -> None:
@@ -2802,7 +2811,7 @@ class TodoApp(App):
                     filters.append(f"✅ {', '.join(status_names)}")
             
             if self.filter_priorities:
-                priority_names = {0: "Sin prioridad", 1: "⬇ Baja", 2: "■ Media", 3: "⬆ Alta"}
+                priority_names = {0: "Sin prioridad", 1: "■ Baja", 2: "■ Media", 3: "■ Alta"}
                 priority_strs = [priority_names.get(p, '') for p in self.filter_priorities]
                 if priority_strs:
                     filters.append(f"⭐ {', '.join(priority_strs)}")
@@ -2967,7 +2976,7 @@ class TodoApp(App):
                         gname = g.name if g else "Sin grupo"
                     results.append((t, gname))
             if not results:
-                self.notify(f"No se encontraron tareas para '{query}'")
+                self.notify(f"No se encontraron tareas para '{query}'", severity="error", timeout=3)
             elif len(results) == 1:
                 self._go_to_task(results[0][0])
             else:
@@ -3090,7 +3099,7 @@ class TodoApp(App):
         if self.calendar_mode: return
         
         if self.current_group_id == self.GENERAL_GROUP_ID:
-            self.notify("❌ No se pueden crear tareas en General. Cambia a un grupo específico.", severity="warning", timeout=3)
+            self.notify("No se pueden crear tareas en General. Cambia a un grupo específico.", severity="error", timeout=3)
             return
         
         async def on_result(text: Optional[str]) -> None:
@@ -3196,4 +3205,4 @@ def main():
     TodoApp().run()
 
 if __name__ == "__main__":
-    main()
+    main()  
