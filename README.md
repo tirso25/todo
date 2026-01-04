@@ -24,7 +24,7 @@ Una aplicación de gestión de tareas moderna y completa para la terminal, const
 - **Comentarios** con soporte para enlaces/URLs
 - **Etiquetas** personalizables e ilimitadas por tarea
 - **Estado** de tareas: pendientes y completadas
-- **Auto-guardado** cada 10 segundos
+- **Auto-guardado** cada 10 segundos (silencioso)
 
 ### 📁 Organización por Grupos
 - **Grupos personalizados** para categorizar tareas
@@ -52,6 +52,7 @@ Una aplicación de gestión de tareas moderna y completa para la terminal, const
 - **Indicadores visuales** de días con tareas
 - **Vista de tareas del día** seleccionado
 - **Salto rápido** al grupo de una tarea
+- **Asignación masiva** de fechas a tareas sin fecha
 
 ### 💬 Comentarios con Enlaces
 - **Comentarios ilimitados** por tarea
@@ -76,6 +77,44 @@ Una aplicación de gestión de tareas moderna y completa para la terminal, const
 - **Búsqueda de texto** en todas las tareas
 - **Navegación directa** al grupo de la tarea encontrada
 - **Resultados múltiples** con modal de selección
+
+---
+
+## 🔄 Sistema de Deshacer/Rehacer
+
+MyTaskit incluye un potente sistema de **undo/redo** que te permite deshacer y rehacer cualquier acción:
+
+### Características
+- ⏮️ **Deshacer** con `Ctrl+Z` - Revierte la última acción realizada
+- ⏭️ **Rehacer** con `Ctrl+Y` - Restaura una acción que fue deshecha
+- 📚 **Hasta 50 niveles** - Mantiene un historial de hasta 50 acciones
+- 🎯 **Restauración completa** - Recupera el estado exacto anterior (tareas, grupos, etiquetas, selección actual)
+- 🔄 **Inteligente** - La pila de rehacer se limpia automáticamente al realizar una nueva acción
+
+### ¿Qué se puede deshacer?
+✅ Crear, editar y eliminar **tareas**  
+✅ Crear, renombrar y eliminar **grupos** (junto con sus tareas)  
+✅ Crear, editar y eliminar **etiquetas**  
+✅ Marcar/desmarcar tareas como **completadas**  
+✅ Asignar **fechas** desde el calendario  
+✅ Cambios en **comentarios** y **prioridades**  
+
+### Ejemplo de uso
+```
+1. Eliminas una tarea por error
+   → Presionas Ctrl+Z
+   → La tarea reaparece
+
+2. Presionas Ctrl+Z varias veces
+   → Deshaces múltiples acciones
+
+3. Quieres rehacer una acción
+   → Presionas Ctrl+Y
+   → Se restaura la acción
+
+4. Haces una nueva edición
+   → El historial de rehacer se limpia automáticamente
+```
 
 ---
 
@@ -140,6 +179,7 @@ Los datos se guardan automáticamente en:
 4. Añadir etiquetas para categorización
 5. Filtrar y ordenar según necesites
 6. Marcar como completadas al terminar
+7. Deshacer con Ctrl+Z si cometes un error
 ```
 
 ---
@@ -154,6 +194,20 @@ Los datos se guardan automáticamente en:
 | `d` | Eliminar tarea seleccionada |
 | `Espacio` | Marcar/Desmarcar como completada |
 | `Enter` | Marcar/Desmarcar como completada |
+
+### Deshacer/Rehacer ⭐ NUEVO
+| Tecla | Acción |
+|-------|--------|
+| `Ctrl+Z` | Deshacer última acción (hasta 50 acciones) |
+| `Ctrl+Y` | Rehacer acción deshecha |
+
+**¿Qué se puede deshacer?**
+- ✅ Crear, editar y eliminar tareas
+- ✅ Crear, renombrar y eliminar grupos
+- ✅ Crear, editar y eliminar etiquetas
+- ✅ Marcar/desmarcar tareas completadas
+- ✅ Asignar fechas desde calendario
+- ✅ Restaura selección y grupo actual
 
 ### Navegación
 | Tecla | Acción |
@@ -172,6 +226,7 @@ Los datos se guardan automáticamente en:
 | Tecla | Acción |
 |-------|--------|
 | `f` | Abrir modal de filtros |
+| `F5` | Resetear todos los filtros |
 | `o` | Abrir modal de ordenación |
 | `/` | Buscar tareas por texto |
 
@@ -189,6 +244,7 @@ Los datos se guardan automáticamente en:
 | `←` `→` `↑` `↓` | Navegar por días/semanas |
 | `n` `p` | Mes siguiente/anterior |
 | `t` | Ir a hoy |
+| `a` | Asignar fecha a tareas sin fecha |
 | `Enter` | Ver tareas del día seleccionado |
 
 ### Sistema
@@ -352,6 +408,14 @@ Edita en el código (línea ~2759):
 ```python
 self.set_interval(10, self.save_data)  # 10 segundos
 # Cambiar el número para ajustar intervalo
+```
+
+### Ajustar Niveles de Deshacer
+
+Edita en el código (línea ~2736):
+```python
+self.max_undo = 50  # Máximo de acciones que se pueden deshacer
+# Cambiar el número según tus necesidades
 ```
 
 ## 📄 Licencia
