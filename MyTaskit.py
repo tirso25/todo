@@ -9,6 +9,8 @@ Controles principales:
   o - Ordenar tareas (alfabético, fecha, prioridad)
   / - Buscar tareas por texto
   i - Ver tareas de hoy
+  Ctrl+Z - Deshacer última acción
+  Ctrl+Y - Rehacer acción deshecha
   Espacio - Marcar/Desmarcar tarea como completada
   q - Salir
 
@@ -55,8 +57,15 @@ Ordenación disponible:
   ⭐ Prioridad - Alta→Baja o Baja→Alta
   (Se pueden combinar múltiples criterios)
 
+Sistema de Deshacer/Rehacer:
+  • Ctrl+Z - Deshacer última acción (hasta 50 acciones)
+  • Ctrl+Y - Rehacer acción deshecha
+  • Funciona con: crear, editar, eliminar tareas/grupos/etiquetas
+  • Restaura estado completo (tareas, grupos, etiquetas, selección)
+  • Se limpia al hacer una nueva acción tras deshacer
+
 Características:
-  • Auto-guardado cada 10 segundos
+  • Auto-guardado cada 10 segundos (silencioso)
   • Guardado automático al salir
   • Recordatorios de tareas que vencen hoy
   • Comentarios en tareas con enlaces opcionales
@@ -66,6 +75,7 @@ Características:
   • Separación visual de tareas completadas
   • Estadísticas en tiempo real
   • Búsqueda global de tareas
+  • Sistema completo de deshacer/rehacer
   • Tema Dracula por defecto
 """
 
@@ -77,6 +87,7 @@ from textual.binding import Binding
 from textual import on
 from dataclasses import dataclass
 from typing import Optional
+from threading import Lock
 import json
 from pathlib import Path
 from datetime import datetime, date, timedelta
@@ -153,9 +164,15 @@ class TaskWidget(Static):
     }
     TaskWidget .checkbox { width: 4; height: 1; }
     TaskWidget .priority { width: 3; height: 1; }
+    TaskWidget .urgent-indicator {
+        width: 3; 
+        height: 1; 
+        color: $warning;
+        text-style: bold;
+    }
     TaskWidget .task-text { width: 1fr; height: 1; }
     TaskWidget .tag { background: #90EE90; color: #000000; }
-    TaskWidget .tag-separator { width: 1; }
+        TaskWidget .tag-separator { width: 1; }
     TaskWidget .task-links { width: 3; height: 1; text-align: right; color: $accent; }
     TaskWidget .task-comments { width: 5; height: 1; text-align: right; color: $primary; }
     TaskWidget .task-group { width: 20; height: 1; text-align: right; color: $text-muted; }
@@ -189,6 +206,15 @@ class TaskWidget(Static):
         }
         priority_icon = priority_icons.get(self.task_data.priority, "  ")
         yield Label(priority_icon, classes="priority")
+        
+        urgent_icon = ""
+        if not self.task_data.done and self.task_data.due_date:
+            try:
+                due_date = datetime.strptime(self.task_data.due_date, "%Y-%m-%d").date()
+                if due_date == date.today():
+                    urgent_icon = "⚠️ "
+            except: pass
+        yield Label(urgent_icon, classes="urgent-indicator")
         
         yield Label(self.task_data.text, classes="task-text")
         
@@ -878,12 +904,48 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
     def action_add_tag(self) -> None:
         def on_result(name: Optional[str]) -> None:
             if name:
-                tag = Tag(id=self.next_tag_id, name=name[:30])
-                self.next_tag_id += 1
-                self.tags.append(tag)
-                self.selected_index = len(self.tags) - 1
-                self.call_later(self.refresh_tags_list)
-        self.app.push_screen(InputModal("🏷️  Nueva Etiqueta", placeholder="Nombre (máx 30 caracteres)..."), on_result)
+                tag_names = [n.strip() for n in name.split(';') if n.strip()]
+                
+                if not tag_names:
+                    return
+                
+                created_count = 0
+                duplicates = []
+                
+                for tag_name in tag_names:
+                    tag_name_truncated = tag_name[:30]
+                    
+                    if any(t.name.lower() == tag_name_truncated.lower() for t in self.tags):
+                        duplicates.append(tag_name_truncated)
+                        continue
+                    
+                    tag = Tag(id=self.next_tag_id, name=tag_name_truncated)
+                    self.next_tag_id += 1
+                    self.tags.append(tag)
+                    created_count += 1
+                
+                if created_count > 0:
+                    self.selected_index = len(self.tags) - 1
+                    self.call_later(self.refresh_tags_list)
+                    
+                    if created_count == 1:
+                        self.app.notify(f"Etiqueta '{tag_names[0][:30]}' creada", severity="information")
+                    else:
+                        self.app.notify(f"{created_count} etiquetas creadas", severity="information")
+                
+                if duplicates:
+                    if len(duplicates) == 1:
+                        self.app.notify(f"'{duplicates[0]}' ya existe", severity="warning")
+                    else:
+                        self.app.notify(f"{len(duplicates)} etiquetas ya existían", severity="warning")
+        
+        self.app.push_screen(
+            InputModal(
+                "🏷️  Nueva(s) Etiqueta(s)", 
+                placeholder="Nombre (usa ; para crear varias)"
+            ), 
+            on_result
+        )
     
     def action_edit_tag(self) -> None:
         if not self.tags or self.selected_index < 0:
@@ -929,11 +991,13 @@ class TagPickerModal(ModalScreen[list[int]]):
     DEFAULT_CSS = """
     TagPickerModal { align: center middle; }
     TagPickerModal > Container {
-        width: 60; height: 22; border: thick $primary;
+        width: 60; height: 26; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     TagPickerModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
-    TagPickerModal #tags-list { width: 100%; height: 10; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    TagPickerModal .search-label { color: $text-muted; margin-bottom: 0; }
+    TagPickerModal Input { width: 100%; margin-bottom: 1; }
+    TagPickerModal #tags-list { width: 100%; height: 12; overflow-y: auto; border: solid $primary-background; padding: 1; }
     TagPickerModal .tag-item {
         width: 100%; height: 3; padding: 0 1;
         border: solid $primary-background; margin-bottom: 1;
@@ -954,6 +1018,9 @@ class TagPickerModal(ModalScreen[list[int]]):
         Binding("j", "move_down", show=False),
         Binding("space", "toggle_tag", show=False),
         Binding("enter", "save", show=False),
+        Binding("ctrl+f", "focus_search", show=False),
+        Binding("/", "focus_search", show=False),
+        Binding("tab", "blur_search", show=False),
     ]
     
     def __init__(self, all_tags: list[Tag], selected_tag_ids: list[int], **kwargs) -> None:
@@ -961,28 +1028,49 @@ class TagPickerModal(ModalScreen[list[int]]):
         self.all_tags = all_tags
         self.selected_tag_ids = list(selected_tag_ids)
         self.selected_index = 0 if all_tags else -1
+        self.search_query = ""
+        self.filtered_tags: list[Tag] = []
+        self.search_focused = False
     
     def compose(self) -> ComposeResult:
         with Container():
             yield Label("🏷️  Seleccionar Etiquetas", classes="modal-title")
+            yield Label("🔍 Buscar (/ para activar, Tab para salir):", classes="search-label")
+            yield Input(placeholder="Escribe para buscar etiquetas...", id="search-input")
             yield Container(id="tags-list")
-            yield Label("↑↓ Navegar | Espacio: Marcar/Desmarcar | Enter: Guardar | Esc: Cancelar", classes="hint")
+            yield Label("↑↓ Navegar | Espacio: Marcar | /: Buscar | Tab: Salir búsqueda | Enter: Guardar", classes="hint")
             with Horizontal(classes="button-row"):
                 yield Button("Guardar", variant="primary", id="save")
                 yield Button("Cancelar", variant="default", id="cancel")
     
     async def on_mount(self) -> None:
         await self.refresh_tags_list()
+        # No auto-focus en el input
+    
+    def _filter_tags(self) -> list[Tag]:
+        if not self.search_query:
+            return self.all_tags
+        
+        query_lower = self.search_query.lower()
+        return [tag for tag in self.all_tags if query_lower in tag.name.lower()]
     
     async def refresh_tags_list(self) -> None:
         tags_list = self.query_one("#tags-list", Container)
         await tags_list.remove_children()
         
+        self.filtered_tags = self._filter_tags()
+        
         if not self.all_tags:
             await tags_list.mount(Label("No hay etiquetas. Créalas con 'T' en el menú principal.", classes="empty-msg"))
             self.selected_index = -1
+        elif not self.filtered_tags:
+            await tags_list.mount(Label(f"No se encontraron etiquetas para '{self.search_query}'", classes="empty-msg"))
+            self.selected_index = -1
         else:
-            for i, tag in enumerate(self.all_tags):
+            if self.selected_index >= len(self.filtered_tags):
+                self.selected_index = max(0, len(self.filtered_tags) - 1)
+            
+            for i, tag in enumerate(self.filtered_tags):
                 checked = "☑" if tag.id in self.selected_tag_ids else "☐"
                 item = Static(f"{checked}  {tag.name}", id=f"tag-{i}", classes="tag-item")
                 await tags_list.mount(item)
@@ -993,14 +1081,14 @@ class TagPickerModal(ModalScreen[list[int]]):
             self.scroll_to_selected()
     
     def scroll_to_selected(self) -> None:
-        if self.selected_index >= 0:
+        if self.selected_index >= 0 and self.selected_index < len(self.filtered_tags):
             try:
                 item = self.query_one(f"#tag-{self.selected_index}", Static)
                 item.scroll_visible()
             except: pass
     
     def update_selection(self) -> None:
-        for i in range(len(self.all_tags)):
+        for i in range(len(self.filtered_tags)):
             try:
                 item = self.query_one(f"#tag-{i}", Static)
                 item.set_class(i == self.selected_index, "selected")
@@ -1008,24 +1096,42 @@ class TagPickerModal(ModalScreen[list[int]]):
         self.scroll_to_selected()
     
     def action_move_up(self) -> None:
-        if self.all_tags and self.selected_index > 0:
+        if self.search_focused:
+            return
+        if self.filtered_tags and self.selected_index > 0:
             self.selected_index -= 1
             self.update_selection()
     
     def action_move_down(self) -> None:
-        if self.all_tags and self.selected_index < len(self.all_tags) - 1:
+        if self.search_focused:
+            return
+        if self.filtered_tags and self.selected_index < len(self.filtered_tags) - 1:
             self.selected_index += 1
             self.update_selection()
     
     def action_toggle_tag(self) -> None:
-        if not self.all_tags or self.selected_index < 0:
+        if self.search_focused:
             return
-        tag = self.all_tags[self.selected_index]
+        if not self.filtered_tags or self.selected_index < 0 or self.selected_index >= len(self.filtered_tags):
+            return
+        tag = self.filtered_tags[self.selected_index]
         if tag.id in self.selected_tag_ids:
             self.selected_tag_ids.remove(tag.id)
         else:
             self.selected_tag_ids.append(tag.id)
         self.call_later(self.refresh_tags_list)
+    
+    def action_focus_search(self) -> None:
+        self.search_focused = True
+        self.query_one("#search-input", Input).focus()
+    
+    def action_blur_search(self) -> None:
+        self.search_focused = False
+        try:
+            self.query_one("#search-input", Input).blur()
+        except:
+            pass
+        self.set_focus(None)
     
     def action_save(self) -> None:
         self.dismiss(self.selected_tag_ids)
@@ -1037,6 +1143,16 @@ class TagPickerModal(ModalScreen[list[int]]):
     @on(Button.Pressed, "#cancel")
     def on_cancel(self) -> None:
         self.action_cancel()
+    
+    @on(Input.Changed, "#search-input")
+    async def on_search_changed(self, event: Input.Changed) -> None:
+        self.search_query = event.value.strip()
+        self.selected_index = 0
+        await self.refresh_tags_list()
+    
+    @on(Input.Submitted, "#search-input")
+    def on_search_submitted(self, event: Input.Submitted) -> None:
+        self.action_blur_search()
     
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -1727,6 +1843,14 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     @on(Button.Pressed, "#save")
     def on_save(self) -> None:
         text = self.query_one("#task-input", Input).value.strip()
+        if not text:
+            self.dismiss(None)
+            return
+        
+        if self.selected_group_id == self.app.GENERAL_GROUP_ID:
+            self.app.notify("No se pueden asignar tareas al grupo General", severity="error", timeout=3)
+            return
+        
         self.dismiss({
             "text": text, 
             "date": self.selected_date,
@@ -2172,6 +2296,137 @@ class SearchResultsScreen(ModalScreen[Optional[Task]]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+class UnscheduledTasksModal(ModalScreen[Optional[list[int]]]):
+    DEFAULT_CSS = """
+    UnscheduledTasksModal { align: center middle; }
+    UnscheduledTasksModal > Container {
+        width: 70; height: 28; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    UnscheduledTasksModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
+    UnscheduledTasksModal .info-text { width: 100%; text-align: center; color: $text-muted; margin-bottom: 1; }
+    UnscheduledTasksModal #tasks-list { width: 100%; height: 14; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    UnscheduledTasksModal .task-item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
+    }
+    UnscheduledTasksModal .task-item:hover { background: $boost; }
+    UnscheduledTasksModal .task-item.selected { border: solid $accent; background: $surface-lighten-1; }
+    UnscheduledTasksModal .task-item.checked { color: $success; }
+    UnscheduledTasksModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
+    UnscheduledTasksModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
+    UnscheduledTasksModal .button-row { width: 100%; height: 3; align: center middle; }
+    UnscheduledTasksModal Button { margin: 0 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("space", "toggle_task", show=False),
+        Binding("enter", "save", show=False),
+    ]
+    
+    def __init__(self, unscheduled_tasks: list[Task], all_groups: list[Group], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.unscheduled_tasks = unscheduled_tasks
+        self.all_groups = all_groups
+        self.selected_task_ids: list[int] = []
+        self.selected_index = 0 if unscheduled_tasks else -1
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("📋 Tareas sin fecha", classes="modal-title")
+            yield Label("Selecciona las tareas para asignarles la fecha del calendario", classes="info-text")
+            yield Container(id="tasks-list")
+            yield Label("↑↓ Navegar | Espacio: Marcar/Desmarcar | Enter: Asignar fecha | Esc: Cancelar", classes="hint")
+            with Horizontal(classes="button-row"):
+                yield Button("Asignar fecha", variant="primary", id="save")
+                yield Button("Cancelar", variant="default", id="cancel")
+    
+    async def on_mount(self) -> None:
+        await self.refresh_list()
+    
+    async def refresh_list(self) -> None:
+        tasks_list = self.query_one("#tasks-list", Container)
+        await tasks_list.remove_children()
+        
+        if not self.unscheduled_tasks:
+            await tasks_list.mount(Label("No hay tareas sin fecha pendientes", classes="empty-msg"))
+            self.selected_index = -1
+        else:
+            for i, task in enumerate(self.unscheduled_tasks):
+                checked = "☑" if task.id in self.selected_task_ids else "☐"
+                
+                group_name = "Sin grupo"
+                if task.group_id is not None:
+                    group = next((g for g in self.all_groups if g.id == task.group_id), None)
+                    if group:
+                        group_name = group.name
+                
+                text = task.text[:35] + "..." if len(task.text) > 35 else task.text
+                group_text = f"📁 {group_name}"
+                
+                padding = " " * max(1, 50 - len(text) - len(group_text))
+                display_text = f"{checked}  {text}{padding}{group_text}"
+                
+                item = Static(display_text, id=f"task-{i}", classes="task-item")
+                await tasks_list.mount(item)
+                if task.id in self.selected_task_ids:
+                    item.add_class("checked")
+                if i == self.selected_index:
+                    item.add_class("selected")
+            self.scroll_to_selected()
+    
+    def scroll_to_selected(self) -> None:
+        if self.selected_index >= 0:
+            try:
+                item = self.query_one(f"#task-{self.selected_index}", Static)
+                item.scroll_visible()
+            except: pass
+    
+    def update_selection(self) -> None:
+        for i in range(len(self.unscheduled_tasks)):
+            try:
+                item = self.query_one(f"#task-{i}", Static)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
+        self.scroll_to_selected()
+    
+    def action_move_up(self) -> None:
+        if self.unscheduled_tasks and self.selected_index > 0:
+            self.selected_index -= 1
+            self.update_selection()
+    
+    def action_move_down(self) -> None:
+        if self.unscheduled_tasks and self.selected_index < len(self.unscheduled_tasks) - 1:
+            self.selected_index += 1
+            self.update_selection()
+    
+    def action_toggle_task(self) -> None:
+        if not self.unscheduled_tasks or self.selected_index < 0:
+            return
+        task = self.unscheduled_tasks[self.selected_index]
+        if task.id in self.selected_task_ids:
+            self.selected_task_ids.remove(task.id)
+        else:
+            self.selected_task_ids.append(task.id)
+        self.call_later(self.refresh_list)
+    
+    def action_save(self) -> None:
+        self.dismiss(self.selected_task_ids if self.selected_task_ids else None)
+    
+    @on(Button.Pressed, "#save")
+    def on_save_btn(self) -> None:
+        self.action_save()
+    
+    @on(Button.Pressed, "#cancel")
+    def on_cancel_btn(self) -> None:
+        self.dismiss(None)
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 class GroupTab(Static):
     DEFAULT_CSS = """
@@ -2406,6 +2661,7 @@ class TodoApp(App):
         Binding("e", "edit_task", "Editar"),
         Binding("d", "delete_task", "Eliminar"),
         Binding("f", "filter_tasks", "Filtrar"),
+        Binding("f5", "reset_filters", "Reset Filtros", show=True),
         Binding("o", "sort_tasks", "Ordenar"),
         Binding("g", "new_group", "Nuevo Grupo"),
         Binding("G", "group_options", "Opc. Grupo"),
@@ -2413,6 +2669,7 @@ class TodoApp(App):
         Binding("c", "toggle_calendar", "Calendario"),
         Binding("i", "today_tasks", "Hoy"),
         Binding("/", "search", "Buscar"),
+        Binding("escape", "handle_escape", show=False),
         Binding("left", "nav_left", show=False),
         Binding("right", "nav_right", show=False),
         Binding("up", "nav_up", show=False),
@@ -2427,6 +2684,8 @@ class TodoApp(App):
         Binding("space", "toggle_done", "Completar"),
         Binding("enter", "action_enter", show=False),
         Binding("q", "quit", "Salir"),
+        Binding("ctrl+z", "undo", "Deshacer"),
+        Binding("ctrl+y", "redo", "Rehacer"),
     ]
     
     TITLE = "MyTaskit"
@@ -2462,8 +2721,24 @@ class TodoApp(App):
             "priority": None
         }
         
-        self.load_data()
+        self.save_lock = Lock()
         
+        self.undo_stack: list[dict] = []
+        self.redo_stack: list[dict] = []
+        self.max_undo = 50
+        
+        self.load_data()
+    
+    def action_reset_filters(self) -> None:
+        self.filter_dates = []
+        self.filter_tag_ids = []
+        self.filter_statuses = []
+        self.filter_priorities = []
+        self.selected_index = 0
+        self.refresh_view()
+        self.update_stats()
+        self.notify("🔄 Filtros reseteados", severity="information", timeout=2)
+    
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="main-container"):
@@ -2473,7 +2748,7 @@ class TodoApp(App):
                 yield Static("", id="calendar-header")
                 yield Static("", id="calendar-display")
                 yield Static("", id="calendar-day-tasks")
-                yield Static("←→↑↓: Navegar | n/p: Mes | t: Hoy | Enter: Ver tareas | c: Volver", id="calendar-hint")
+                yield Static("←→↑↓: Navegar | n/p: Mes | t: Hoy | a: Asignar | Enter: Ver tareas | Esc: Volver", id="calendar-hint")
             yield Static("", id="stats")
         yield Footer()
     
@@ -2728,7 +3003,9 @@ class TodoApp(App):
     
     def update_selection(self) -> None:
         ordered = self._get_ordered_tasks()
-        if not ordered: return
+        if not ordered:
+            self.selected_index = 0
+            return
         self.selected_index = max(0, min(self.selected_index, len(ordered) - 1))
         for i, t in enumerate(ordered):
             try:
@@ -2831,6 +3108,13 @@ class TodoApp(App):
         self.save_data()
         self.exit()
     
+    async def action_handle_escape(self) -> None:
+        if self.calendar_mode:
+            self.calendar_mode = False
+            await self.refresh_tabs()
+            await self.refresh_view()
+            self.update_stats()
+    
     async def action_nav_left(self) -> None:
         if self.calendar_mode:
             d = date(self.cal_year, self.cal_month, self.cal_day) - timedelta(days=1)
@@ -2902,10 +3186,6 @@ class TodoApp(App):
         idx = (ids.index(self.current_group_id) - 1) % len(ids)
         self.current_group_id = ids[idx]
         self.selected_index = 0
-        self.filter_dates = []
-        self.filter_tag_ids = []
-        self.filter_statuses = []
-        self.filter_priorities = []
         await self.refresh_tabs()
         await self.refresh_view()
         self.update_stats()
@@ -2915,14 +3195,10 @@ class TodoApp(App):
         idx = (ids.index(self.current_group_id) + 1) % len(ids)
         self.current_group_id = ids[idx]
         self.selected_index = 0
-        self.filter_dates = []
-        self.filter_tag_ids = []
-        self.filter_statuses = []
-        self.filter_priorities = []
         await self.refresh_tabs()
         await self.refresh_view()
         self.update_stats()
-    
+        
     async def action_toggle_calendar(self) -> None:
         self.calendar_mode = not self.calendar_mode
         if self.calendar_mode:
@@ -2944,6 +3220,7 @@ class TodoApp(App):
         if not self.calendar_mode:
             w = self.get_selected_widget()
             if w:
+                self._save_undo_state()
                 w.toggle_done()
                 self.save_data()
                 self.update_stats()
@@ -2982,6 +3259,36 @@ class TodoApp(App):
             else:
                 self.push_screen(SearchResultsScreen(results, query), lambda t: self._go_to_task(t) if t else None)
         self.push_screen(InputModal("🔍 Buscar", placeholder="Buscar tareas..."), on_input)
+    
+    def action_assign_tasks_from_calendar(self) -> None:
+        if not self.calendar_mode:
+            return
+        
+        unscheduled_tasks = [t for t in self.tasks if t.due_date is None and not t.done]
+        
+        if not unscheduled_tasks:
+            self.notify("No hay tareas sin fecha para asignar", severity="information", timeout=3)
+            return
+        
+        async def on_result(selected_task_ids: Optional[list[int]]) -> None:
+            if selected_task_ids:
+                self._save_undo_state()
+                selected_date = f"{self.cal_year:04d}-{self.cal_month:02d}-{self.cal_day:02d}"
+                
+                count = 0
+                for task in self.tasks:
+                    if task.id in selected_task_ids:
+                        task.due_date = selected_date
+                        count += 1
+                
+                if count > 0:
+                    self.save_data()
+                    self.refresh_calendar()
+                    self.update_stats()
+                    self.notify(f"📅 {count} tarea(s) asignada(s) (Ctrl+Z para deshacer)", 
+                            severity="information", timeout=2)
+        
+        self.push_screen(UnscheduledTasksModal(unscheduled_tasks, self.groups), on_result)
     
     def action_filter_tasks(self) -> None:
         if self.calendar_mode: return
@@ -3034,6 +3341,7 @@ class TodoApp(App):
         if self.calendar_mode: return
         async def on_result(name: Optional[str]) -> None:
             if name:
+                self._save_undo_state()
                 g = Group(id=self.next_group_id, name=name)
                 self.next_group_id += 1
                 self.groups.append(g)
@@ -3043,6 +3351,7 @@ class TodoApp(App):
                 await self.refresh_view()
                 self.update_stats()
                 self.save_data()
+                self.notify("📁 Grupo creado (Ctrl+Z para deshacer)", severity="information", timeout=2)
         self.push_screen(InputModal("Nuevo Grupo", placeholder="Nombre..."), on_result)
     
     def action_group_options(self) -> None:
@@ -3050,17 +3359,21 @@ class TodoApp(App):
             return
         g = next((x for x in self.groups if x.id == self.current_group_id), None)
         if not g: return
+        
         async def on_opt(opt: str) -> None:
             if opt == "rename":
                 def on_name(name: Optional[str]) -> None:
                     if name:
+                        self._save_undo_state()
                         g.name = name
                         self.call_later(self._after_rename)
+                        self.notify("✏️ Grupo renombrado (Ctrl+Z para deshacer)", severity="information", timeout=2)
                 self.push_screen(InputModal("Renombrar", initial_text=g.name), on_name)
             elif opt == "delete":
                 count = len([t for t in self.tasks if t.group_id == g.id])
                 async def on_confirm(yes: bool) -> None:
                     if yes:
+                        self._save_undo_state()
                         self.tasks = [t for t in self.tasks if t.group_id != g.id]
                         self.groups.remove(g)
                         self.current_group_id = None
@@ -3069,6 +3382,8 @@ class TodoApp(App):
                         await self.refresh_view()
                         self.update_stats()
                         self.save_data()
+                        self.notify(f"🗑️ Grupo eliminado con {count} tareas (Ctrl+Z para deshacer)", 
+                                severity="information", timeout=2)
                 self.push_screen(ConfirmModal(f"¿Eliminar '{g.name}' y sus {count} tareas?"), on_confirm)
         self.push_screen(GroupOptionsModal(g.name), on_opt)
     
@@ -3080,23 +3395,29 @@ class TodoApp(App):
     def action_manage_tags(self) -> None:
         async def on_result(updated_tags: list[Tag]) -> None:
             if updated_tags is not None:
-                old_tag_ids = {t.id for t in self.tags}
-                new_tag_ids = {t.id for t in updated_tags}
-                deleted_tag_ids = old_tag_ids - new_tag_ids
-                
-                if deleted_tag_ids:
-                    for task in self.tasks:
-                        task.tags = [tid for tid in task.tags if tid not in deleted_tag_ids]
-                
-                self.tags = updated_tags
-                if self.tags:
-                    self.next_tag_id = max(t.id for t in self.tags) + 1
-                self.save_data()
-                await self.refresh_view()
+                if updated_tags != self.tags:
+                    self._save_undo_state()
+                    
+                    old_tag_ids = {t.id for t in self.tags}
+                    new_tag_ids = {t.id for t in updated_tags}
+                    deleted_tag_ids = old_tag_ids - new_tag_ids
+                    
+                    if deleted_tag_ids:
+                        for task in self.tasks:
+                            task.tags = [tid for tid in task.tags if tid not in deleted_tag_ids]
+                    
+                    self.tags = updated_tags
+                    if self.tags:
+                        self.next_tag_id = max(t.id for t in self.tags) + 1
+                    self.save_data()
+                    await self.refresh_view()
+                    self.notify("🏷️ Etiquetas actualizadas (Ctrl+Z para deshacer)", severity="information", timeout=2)
         self.push_screen(TagsManagerModal(self.tags, self.next_tag_id), on_result)
     
     def action_add_task(self) -> None:
-        if self.calendar_mode: return
+        if self.calendar_mode:
+            self.action_assign_tasks_from_calendar()
+            return
         
         if self.current_group_id == self.GENERAL_GROUP_ID:
             self.notify("No se pueden crear tareas en General. Cambia a un grupo específico.", severity="error", timeout=3)
@@ -3104,6 +3425,7 @@ class TodoApp(App):
         
         async def on_result(text: Optional[str]) -> None:
             if text:
+                self._save_undo_state()
                 t = Task(id=self.next_task_id, text=text, group_id=self.current_group_id)
                 self.next_task_id += 1
                 self.tasks.append(t)
@@ -3112,6 +3434,7 @@ class TodoApp(App):
                 await self.refresh_view()
                 self.update_stats()
                 self.save_data()
+                self.notify("✅ Tarea creada (Ctrl+Z para deshacer)", severity="information", timeout=2)
         self.push_screen(InputModal("Nueva Tarea", placeholder="Escribe la tarea..."), on_result)
     
     def action_edit_task(self) -> None:
@@ -3122,8 +3445,10 @@ class TodoApp(App):
         next_comment_id = 1
         if t.comments:
             next_comment_id = max(c.id for c in t.comments) + 1
+        
         async def on_result(result: Optional[dict]) -> None:
             if result:
+                self._save_undo_state()
                 t.text = result["text"]
                 t.due_date = result["date"]
                 t.comments = result.get("comments", [])
@@ -3144,40 +3469,147 @@ class TodoApp(App):
                         self.selected_index = i
                         break
                 self.update_selection()
+                self.notify("✏️ Tarea editada (Ctrl+Z para deshacer)", severity="information", timeout=2)
         self.push_screen(EditTaskModal(t.text, t.due_date, t.group_id, self.groups, t.comments, next_comment_id, self.tags, t.tags, t.priority), on_result)
-    
+        
     def action_delete_task(self) -> None:
         if self.calendar_mode: return
         ordered = self._get_ordered_tasks()
         if not ordered: return
         t = ordered[self.selected_index]
+        
         async def on_confirm(yes: bool) -> None:
             if yes:
+                self._save_undo_state()
                 self.tasks.remove(t)
                 if self.selected_index >= len(self._get_ordered_tasks()) and self.selected_index > 0:
                     self.selected_index -= 1
                 await self.refresh_view()
                 self.update_stats()
                 self.save_data()
+                self.notify("🗑️ Tarea eliminada (Ctrl+Z para deshacer)", severity="information", timeout=2)
         txt = t.text[:30] + "..." if len(t.text) > 30 else t.text
         self.push_screen(ConfirmModal(f"¿Eliminar '{txt}'?"), on_confirm)
-    
-    def save_data(self) -> None:
-        data = {
+        
+    def _capture_state(self) -> dict:
+        return {
             "next_task_id": self.next_task_id,
             "next_group_id": self.next_group_id,
             "next_tag_id": self.next_tag_id,
+            "current_group_id": self.current_group_id,
+            "selected_index": self.selected_index,
             "groups": [{"id": g.id, "name": g.name} for g in self.groups],
             "tags": [{"id": t.id, "name": t.name} for t in self.tags],
-            "tasks": [{"id": t.id, "text": t.text, "done": t.done, "created_at": t.created_at,
-                    "group_id": t.group_id, "due_date": t.due_date,
-                    "comments": [{"id": c.id, "text": c.text, "url": c.url, "created_at": c.created_at} for c in t.comments],
-                    "tags": t.tags, "priority": t.priority} for t in self.tasks]
+            "tasks": [{
+                "id": t.id,
+                "text": t.text,
+                "done": t.done,
+                "created_at": t.created_at,
+                "group_id": t.group_id,
+                "due_date": t.due_date,
+                "comments": [{"id": c.id, "text": c.text, "url": c.url, "created_at": c.created_at} 
+                            for c in t.comments],
+                "tags": list(t.tags),
+                "priority": t.priority
+            } for t in self.tasks]
         }
+
+    def _save_undo_state(self) -> None:
+        state = self._capture_state()
+        self.undo_stack.append(state)
+        
+        self.redo_stack.clear()
+        
+        if len(self.undo_stack) > self.max_undo:
+            self.undo_stack.pop(0)
+
+    def _restore_state(self, state: dict) -> None:
+        self.next_task_id = state["next_task_id"]
+        self.next_group_id = state["next_group_id"]
+        self.next_tag_id = state["next_tag_id"]
+        self.current_group_id = state["current_group_id"]
+        self.selected_index = state["selected_index"]
+        
+        self.groups = [Group(id=g["id"], name=g["name"]) for g in state["groups"]]
+        
+        self.tags = [Tag(id=t["id"], name=t["name"]) for t in state["tags"]]
+        
+        self.tasks = []
+        for t in state["tasks"]:
+            comments = [Comment(id=c["id"], text=c["text"], url=c.get("url"), created_at=c.get("created_at", "")) for c in t["comments"]]
+            task = Task(
+                id=t["id"],
+                text=t["text"],
+                done=t["done"],
+                created_at=t["created_at"],
+                group_id=t["group_id"],
+                due_date=t["due_date"],
+                comments=comments,
+                tags=list(t["tags"]),
+                priority=t["priority"]
+            )
+            self.tasks.append(task)
+
+    async def action_undo(self) -> None:
+        if not self.undo_stack:
+            self.notify("⚠️ No hay acciones para deshacer", severity="warning", timeout=2)
+            return
+        
+        current_state = self._capture_state()
+        self.redo_stack.append(current_state)
+        
+        if len(self.redo_stack) > self.max_undo:
+            self.redo_stack.pop(0)
+        
+        previous_state = self.undo_stack.pop()
+        
+        self._restore_state(previous_state)
+        
+        await self.refresh_tabs()
+        await self.refresh_view()
+        self.update_stats()
+        
+        self.notify(f"↩️ Deshecho (Ctrl+Y para rehacer | {len(self.undo_stack)} deshacer restantes)", severity="information", timeout=2)
+    
+    async def action_redo(self) -> None:
+        if not self.redo_stack:
+            self.notify("⚠️ No hay acciones para rehacer", severity="warning", timeout=2)
+            return
+        
+        current_state = self._capture_state()
+        self.undo_stack.append(current_state)
+        
+        if len(self.undo_stack) > self.max_undo:
+            self.undo_stack.pop(0)
+        
+        redo_state = self.redo_stack.pop()
+        
+        self._restore_state(redo_state)
+        
+        await self.refresh_tabs()
+        await self.refresh_view()
+        self.update_stats()
+        
+        self.notify(f"↪️ Rehecho (Ctrl+Z para deshacer | {len(self.redo_stack)} rehacer restantes)", severity="information", timeout=2)
+    
+    def save_data(self) -> None:
+        with self.save_lock:
+            data = {
+                "next_task_id": self.next_task_id,
+                "next_group_id": self.next_group_id,
+                "next_tag_id": self.next_tag_id,
+                "groups": [{"id": g.id, "name": g.name} for g in self.groups],
+                "tags": [{"id": t.id, "name": t.name} for t in self.tags],
+                "tasks": [{"id": t.id, "text": t.text, "done": t.done, "created_at": t.created_at,
+                        "group_id": t.group_id, "due_date": t.due_date,
+                        "comments": [{"id": c.id, "text": c.text, "url": c.url, "created_at": c.created_at} for c in t.comments],
+                        "tags": t.tags, "priority": t.priority} for t in self.tasks]
+            }
         try: 
             self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except Exception as e:
             print(f"Error guardando datos: {e}")
+            self.notify(f"❌ Error al guardar: {e}", severity="error", timeout=3)
 
     def load_data(self) -> None:
         try:
