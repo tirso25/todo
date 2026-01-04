@@ -127,14 +127,14 @@ MyTaskit incluye un potente sistema de **undo/redo** que te permite deshacer y r
 ### Instalación Rápida
 ```bash
 # Clonar el repositorio
-git clone https://github.com/tu-usuario/todo-app.git
-cd todo-app
+git clone https://github.com/tirso25/MyTaskit.git
+cd MyTaskit
 
 # Instalar dependencias
 pip install textual
 
 # Ejecutar la aplicación
-python todo.py
+python MyTaskit.py
 ```
 
 ### Instalación de Dependencias
