@@ -124,6 +124,21 @@ class Comment:
             self.created_at = datetime.now().strftime("%d/%m %H:%M")
 
 @dataclass
+class Subtask:
+    id: int
+    text: str
+    done: bool = False
+    created_at: str = ""
+    due_date: Optional[str] = None
+    comments: list = None
+    
+    def __post_init__(self):
+        if not self.created_at:
+            self.created_at = datetime.now().strftime("%d/%m %H:%M")
+        if self.comments is None:
+            self.comments = []
+
+@dataclass
 class Tag:
     id: int
     name: str
@@ -142,6 +157,7 @@ class Task:
     comments: list = None
     tags: list = None
     priority: int = 0
+    subtasks: list = None
     
     def __post_init__(self):
         if not self.created_at:
@@ -150,11 +166,605 @@ class Task:
             self.comments = []
         if self.tags is None:
             self.tags = []
+        if self.subtasks is None:
+            self.subtasks = []
 
 @dataclass
 class Group:
     id: int
     name: str
+
+class SubtasksModal(ModalScreen[list]):
+    DEFAULT_CSS = """
+    SubtasksModal { align: center middle; }
+    SubtasksModal > Container {
+        width: 80; height: 30; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    SubtasksModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
+    SubtasksModal #subtasks-list { width: 100%; height: 16; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    SubtasksModal .subtask-item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
+        layout: horizontal;
+    }
+    SubtasksModal .subtask-item:hover { background: $boost; }
+    SubtasksModal .subtask-item.selected { border: solid $accent; background: $surface-lighten-1; }
+    SubtasksModal .subtask-item.done .subtask-text { text-style: strike; color: $text-muted; }
+    SubtasksModal .subtask-checkbox { width: 4; height: 1; }
+    SubtasksModal .subtask-text { width: 1fr; height: 1; }
+    SubtasksModal .subtask-comments { width: 5; height: 1; text-align: right; color: $primary; }
+    SubtasksModal .subtask-date { width: 10; height: 1; text-align: right; color: $warning; }
+    SubtasksModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
+    SubtasksModal .hint { width: 100%; height: auto; text-align: center; color: $text-muted; margin: 1 0; padding: 0 2; }
+    SubtasksModal .button-row { width: 100%; height: 3; align: center middle; }
+    SubtasksModal Button { margin: 0 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "close", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("a", "add_subtask", show=False),
+        Binding("e", "edit_subtask", show=False),
+        Binding("d", "delete_subtask", show=False),
+        Binding("space", "toggle_subtask", show=False),
+        Binding("D", "set_date", show=False),
+    ]
+    
+    def __init__(self, subtasks: list, next_subtask_id: int, next_comment_id: int, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.subtasks = [Subtask(id=s.id, text=s.text, done=s.done, 
+                                created_at=s.created_at, due_date=s.due_date,
+                                comments=s.comments if hasattr(s, 'comments') else []) 
+                        for s in subtasks]
+        self.next_subtask_id = next_subtask_id
+        self.next_comment_id = next_comment_id
+        self.selected_index = 0 if subtasks else -1
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("📋 Subtareas", classes="modal-title")
+            yield Container(id="subtasks-list")
+            yield Label(
+                "↑↓/k/j: Navegar | a: Añadir | e: Editar | d: Eliminar\n"
+                "Espacio: Completar | D: Fecha | Esc: Cerrar",
+                classes="hint"
+            )
+            with Horizontal(classes="button-row"):
+                yield Button("➕ Añadir", variant="primary", id="add")
+                yield Button("✏️ Editar", variant="default", id="edit")
+                yield Button("🗑️ Eliminar", variant="error", id="delete")
+    
+    async def on_mount(self) -> None:
+        await self.refresh_subtasks_list()
+    
+    async def refresh_subtasks_list(self) -> None:
+        subtasks_list = self.query_one("#subtasks-list", Container)
+        await subtasks_list.remove_children()
+        
+        if not self.subtasks:
+            await subtasks_list.mount(Label("No hay subtareas. Pulsa 'a' para añadir una.", classes="empty-msg"))
+            self.selected_index = -1
+        else:
+            for i, subtask in enumerate(self.subtasks):
+                item = Horizontal(id=f"subtask-{i}", classes="subtask-item")
+                await subtasks_list.mount(item)
+                
+                checkbox = "☑" if subtask.done else "☐"
+                await item.mount(Label(checkbox, classes="subtask-checkbox"))
+                
+                await item.mount(Label(subtask.text, classes="subtask-text"))
+                
+                comments_str = f"💬{len(subtask.comments)}" if subtask.comments else ""
+                await item.mount(Label(comments_str, classes="subtask-comments"))
+                
+                date_str = ""
+                if subtask.due_date:
+                    try:
+                        d = datetime.strptime(subtask.due_date, "%Y-%m-%d")
+                        date_str = f"📅 {d.day:02d}/{d.month:02d}"
+                    except: pass
+                await item.mount(Label(date_str, classes="subtask-date"))
+                
+                if subtask.done:
+                    item.add_class("done")
+                
+                if i == self.selected_index:
+                    item.add_class("selected")
+            
+            self.scroll_to_selected()
+    
+    def scroll_to_selected(self) -> None:
+        if self.selected_index >= 0:
+            try:
+                item = self.query_one(f"#subtask-{self.selected_index}", Horizontal)
+                item.scroll_visible()
+            except: pass
+    
+    def update_selection(self) -> None:
+        for i in range(len(self.subtasks)):
+            try:
+                item = self.query_one(f"#subtask-{i}", Horizontal)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
+        self.scroll_to_selected()
+    
+    def action_move_up(self) -> None:
+        if self.subtasks and self.selected_index > 0:
+            self.selected_index -= 1
+            self.update_selection()
+    
+    def action_move_down(self) -> None:
+        if self.subtasks and self.selected_index < len(self.subtasks) - 1:
+            self.selected_index += 1
+            self.update_selection()
+    
+    def action_add_subtask(self) -> None:
+        def on_result(text: Optional[str]) -> None:
+            if text:
+                subtask = Subtask(id=self.next_subtask_id, text=text)
+                self.next_subtask_id += 1
+                self.subtasks.append(subtask)
+                self.selected_index = len(self.subtasks) - 1
+                self.call_later(self.refresh_subtasks_list)
+        self.app.push_screen(InputModal("📋 Nueva Subtarea", placeholder="Descripción..."), on_result)
+    
+    def action_edit_subtask(self) -> None:
+        if not self.subtasks or self.selected_index < 0:
+            return
+        subtask = self.subtasks[self.selected_index]
+        
+        next_comment_id = self.next_comment_id
+        if subtask.comments:
+            next_comment_id = max(c.id for c in subtask.comments) + 1
+        
+        def on_result(result: Optional[dict]) -> None:
+            if result:
+                subtask.text = result["text"]
+                subtask.comments = result.get("comments", [])
+                if subtask.comments:
+                    self.next_comment_id = max(c.id for c in subtask.comments) + 1
+                self.call_later(self.refresh_subtasks_list)
+        
+        self.app.push_screen(
+            EditSubtaskModal(subtask.text, subtask.comments, next_comment_id),
+            on_result
+        )
+    
+    def action_delete_subtask(self) -> None:
+        if not self.subtasks or self.selected_index < 0:
+            return
+        subtask = self.subtasks[self.selected_index]
+        txt = subtask.text[:30] + "..." if len(subtask.text) > 30 else subtask.text
+        def on_confirm(yes: bool) -> None:
+            if yes:
+                self.subtasks.pop(self.selected_index)
+                if self.selected_index >= len(self.subtasks) and self.selected_index > 0:
+                    self.selected_index -= 1
+                if not self.subtasks:
+                    self.selected_index = -1
+                self.call_later(self.refresh_subtasks_list)
+        self.app.push_screen(ConfirmModal(f"¿Eliminar subtarea '{txt}'?"), on_confirm)
+    
+    def action_toggle_subtask(self) -> None:
+        if not self.subtasks or self.selected_index < 0:
+            return
+        subtask = self.subtasks[self.selected_index]
+        subtask.done = not subtask.done
+        self.call_later(self.refresh_subtasks_list)
+    
+    def action_set_date(self) -> None:
+        if not self.subtasks or self.selected_index < 0:
+            return
+        subtask = self.subtasks[self.selected_index]
+        def on_result(date_str: Optional[str]) -> None:
+            if date_str is not None:
+                subtask.due_date = date_str if date_str else None
+                self.call_later(self.refresh_subtasks_list)
+        self.app.push_screen(DatePickerModal(subtask.due_date), on_result)
+    
+    @on(Button.Pressed, "#add")
+    def on_add(self) -> None:
+        self.action_add_subtask()
+    
+    @on(Button.Pressed, "#edit")
+    def on_edit(self) -> None:
+        self.action_edit_subtask()
+    
+    @on(Button.Pressed, "#delete")
+    def on_delete(self) -> None:
+        self.action_delete_subtask()
+    
+    def action_close(self) -> None:
+        self.dismiss(self.subtasks)
+
+class UnscheduledItemsModal(ModalScreen[Optional[dict]]):
+    DEFAULT_CSS = """
+    UnscheduledItemsModal { align: center middle; }
+    UnscheduledItemsModal > Container {
+        width: 80; height: 32; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    UnscheduledItemsModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
+    UnscheduledItemsModal .info-text { width: 100%; text-align: center; color: $text-muted; margin-bottom: 1; }
+    UnscheduledItemsModal .section-header { 
+        width: 100%; 
+        text-align: left; 
+        text-style: bold; 
+        color: $accent;
+        margin: 1 0;
+        padding: 0 1;
+    }
+    UnscheduledItemsModal #items-list { width: 100%; height: 18; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    UnscheduledItemsModal .item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
+    }
+    UnscheduledItemsModal .item:hover { background: $boost; }
+    UnscheduledItemsModal .item.selected { border: solid $accent; background: $surface-lighten-1; }
+    UnscheduledItemsModal .item.checked { color: $success; }
+    UnscheduledItemsModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
+    UnscheduledItemsModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
+    UnscheduledItemsModal .button-row { width: 100%; height: 3; align: center middle; }
+    UnscheduledItemsModal Button { margin: 0 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("space", "toggle_item", show=False),
+        Binding("enter", "save", show=False),
+    ]
+    
+    def __init__(self, tasks: list[Task], all_groups: list[Group], **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.all_groups = all_groups
+        
+        self.items = []
+        
+        for task in tasks:
+            if task.due_date is None and not task.done:
+                group_name = self._get_group_name(task.group_id)
+                self.items.append(("task", task.id, None, task.text, group_name))
+            
+            for subtask in task.subtasks:
+                if subtask.due_date is None and not subtask.done:
+                    self.items.append(("subtask", task.id, subtask.id, subtask.text, task.text))
+        
+        self.selected_item_ids = []
+        self.selected_index = 0 if self.items else -1
+    
+    def _get_group_name(self, group_id: Optional[int]) -> str:
+        if group_id is None:
+            return "Sin grupo"
+        group = next((g for g in self.all_groups if g.id == group_id), None)
+        return group.name if group else "Sin grupo"
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("📅 Asignar fecha desde calendario", classes="modal-title")
+            yield Label("Selecciona tareas y/o subtareas para asignarles la fecha del calendario", classes="info-text")
+            yield Container(id="items-list")
+            yield Label("↑↓ Navegar | Espacio: Marcar/Desmarcar | Enter: Asignar fecha | Esc: Cancelar", classes="hint")
+            with Horizontal(classes="button-row"):
+                yield Button("Asignar fecha", variant="primary", id="save")
+                yield Button("Cancelar", variant="default", id="cancel")
+    
+    async def on_mount(self) -> None:
+        await self.refresh_list()
+    
+    async def refresh_list(self) -> None:
+        items_list = self.query_one("#items-list", Container)
+        await items_list.remove_children()
+        
+        if not self.items:
+            await items_list.mount(Label("No hay tareas ni subtareas sin fecha pendientes", classes="empty-msg"))
+            self.selected_index = -1
+            return
+        
+        tasks_items = [item for item in self.items if item[0] == "task"]
+        subtasks_items = [item for item in self.items if item[0] == "subtask"]
+        
+        current_index = 0
+        
+        if tasks_items:
+            await items_list.mount(Static("📋 Tareas:", classes="section-header"))
+            for item_type, task_id, subtask_id, text, parent_text in tasks_items:
+                checked = "☑" if (item_type, task_id, subtask_id) in self.selected_item_ids else "☐"
+                text_display = text[:35] + "..." if len(text) > 35 else text
+                padding = " " * max(1, 50 - len(text_display) - len(parent_text))
+                display_text = f"{checked}  {text_display}{padding}📁 {parent_text}"
+                
+                item = Static(display_text, id=f"item-{current_index}", classes="item")
+                await items_list.mount(item)
+                if (item_type, task_id, subtask_id) in self.selected_item_ids:
+                    item.add_class("checked")
+                if current_index == self.selected_index:
+                    item.add_class("selected")
+                current_index += 1
+        
+        if subtasks_items:
+            await items_list.mount(Static("📝 Subtareas:", classes="section-header"))
+            for item_type, task_id, subtask_id, text, parent_text in subtasks_items:
+                checked = "☑" if (item_type, task_id, subtask_id) in self.selected_item_ids else "☐"
+                text_display = text[:35] + "..." if len(text) > 35 else text
+                parent_display = parent_text[:20] + "..." if len(parent_text) > 20 else parent_text
+                padding = " " * max(1, 40 - len(text_display) - len(parent_display))
+                display_text = f"{checked}  ↳ {text_display}{padding}🔗 {parent_display}"
+                
+                item = Static(display_text, id=f"item-{current_index}", classes="item")
+                await items_list.mount(item)
+                if (item_type, task_id, subtask_id) in self.selected_item_ids:
+                    item.add_class("checked")
+                if current_index == self.selected_index:
+                    item.add_class("selected")
+                current_index += 1
+        
+        self.scroll_to_selected()
+    
+    def scroll_to_selected(self) -> None:
+        if self.selected_index >= 0:
+            try:
+                item = self.query_one(f"#item-{self.selected_index}", Static)
+                item.scroll_visible()
+            except: pass
+    
+    def update_selection(self) -> None:
+        for i in range(len(self.items)):
+            try:
+                item = self.query_one(f"#item-{i}", Static)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
+        self.scroll_to_selected()
+    
+    def action_move_up(self) -> None:
+        if self.items and self.selected_index > 0:
+            self.selected_index -= 1
+            self.update_selection()
+    
+    def action_move_down(self) -> None:
+        if self.items and self.selected_index < len(self.items) - 1:
+            self.selected_index += 1
+            self.update_selection()
+    
+    def action_toggle_item(self) -> None:
+        if not self.items or self.selected_index < 0:
+            return
+        item_type, task_id, subtask_id, text, parent_text = self.items[self.selected_index]
+        item_id = (item_type, task_id, subtask_id)
+        if item_id in self.selected_item_ids:
+            self.selected_item_ids.remove(item_id)
+        else:
+            self.selected_item_ids.append(item_id)
+        self.call_later(self.refresh_list)
+    
+    def action_save(self) -> None:
+        if not self.selected_item_ids:
+            self.dismiss(None)
+            return
+        
+        task_ids = [task_id for item_type, task_id, subtask_id in self.selected_item_ids if item_type == "task"]
+        subtask_selections = [(task_id, subtask_id) for item_type, task_id, subtask_id in self.selected_item_ids if item_type == "subtask"]
+        
+        self.dismiss({
+            "task_ids": task_ids,
+            "subtask_selections": subtask_selections
+        })
+    
+    @on(Button.Pressed, "#save")
+    def on_save_btn(self) -> None:
+        self.action_save()
+    
+    @on(Button.Pressed, "#cancel")
+    def on_cancel_btn(self) -> None:
+        self.dismiss(None)
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+        
+class DayItemsModal(ModalScreen[Optional[tuple]]):
+    DEFAULT_CSS = """
+    DayItemsModal { align: center middle; }
+    DayItemsModal > Container {
+        width: 80; height: 26; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    DayItemsModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    DayItemsModal .section-header { 
+        width: 100%; 
+        text-align: left; 
+        text-style: bold; 
+        color: $accent;
+        margin: 1 0;
+        padding: 0 1;
+    }
+    DayItemsModal #items-list { width: 100%; height: 1fr; overflow-y: auto; }
+    DayItemsModal .item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
+        layout: horizontal;
+    }
+    DayItemsModal .item:hover { background: $boost; }
+    DayItemsModal .item.selected { border: solid $accent; background: $surface-lighten-1; }
+    DayItemsModal .item-main { width: 1fr; height: 1; }
+    DayItemsModal .item-info { width: auto; height: 1; text-align: right; color: $text-muted; }
+    DayItemsModal .hint { width: 100%; text-align: center; color: $text-muted; margin-top: 1; }
+    DayItemsModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("space", "go_to_item", show=False),
+        Binding("enter", "go_to_item", show=False),
+    ]
+    
+    def __init__(self, tasks: list[tuple], subtasks: list[tuple], date_str: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.tasks = tasks
+        self.subtasks = subtasks
+        self.date_str = date_str
+        self.all_items = []
+        
+        for task, group_name in tasks:
+            self.all_items.append(("task", task, group_name))
+        for subtask, parent_task, group_name in subtasks:
+            self.all_items.append(("subtask", (subtask, parent_task), group_name))
+        
+        self.selected_index = 0 if self.all_items else -1
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label(f"📅 {self.date_str}", classes="modal-title")
+            yield Container(id="items-list")
+            yield Label("↑↓ Navegar | Espacio/Enter: Ir a la tarea | Esc: Cerrar", classes="hint")
+    
+    async def on_mount(self) -> None:
+        items_list = self.query_one("#items-list", Container)
+        
+        if not self.all_items:
+            await items_list.mount(Label("No hay tareas ni subtareas para este día", classes="empty-msg"))
+            return
+        
+        current_index = 0
+        
+        if self.tasks:
+            await items_list.mount(Static("📋 Tareas:", classes="section-header"))
+            for task, group_name in self.tasks:
+                checkbox = "☑" if task.done else "☐"
+                item = Horizontal(id=f"item-{current_index}", classes="item")
+                await items_list.mount(item)
+                
+                await item.mount(Label(f"{checkbox} {task.text}", classes="item-main"))
+                await item.mount(Label(f"📁 {group_name}", classes="item-info"))
+                
+                if current_index == self.selected_index:
+                    item.add_class("selected")
+                current_index += 1
+        
+        if self.subtasks:
+            await items_list.mount(Static("📝 Subtareas:", classes="section-header"))
+            for subtask, parent_task, group_name in self.subtasks:
+                checkbox = "☑" if subtask.done else "☐"
+                parent_text = parent_task.text[:25] + "..." if len(parent_task.text) > 25 else parent_task.text
+                item = Horizontal(id=f"item-{current_index}", classes="item")
+                await items_list.mount(item)
+                
+                await item.mount(Label(f"{checkbox} ↳ {subtask.text}", classes="item-main"))
+                await item.mount(Label(f"🔗 {parent_text}", classes="item-info"))
+                
+                if current_index == self.selected_index:
+                    item.add_class("selected")
+                current_index += 1
+    
+    def update_selection(self) -> None:
+        for i in range(len(self.all_items)):
+            try:
+                item = self.query_one(f"#item-{i}", Horizontal)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
+    
+    def action_move_up(self) -> None:
+        if self.all_items and self.selected_index > 0:
+            self.selected_index -= 1
+            self.update_selection()
+    
+    def action_move_down(self) -> None:
+        if self.all_items and self.selected_index < len(self.all_items) - 1:
+            self.selected_index += 1
+            self.update_selection()
+    
+    def action_go_to_item(self) -> None:
+        if self.all_items and self.selected_index >= 0:
+            item_type, item_obj, info = self.all_items[self.selected_index]
+            if item_type == "task":
+                self.dismiss(("task", item_obj))
+            else:
+                subtask, parent_task = item_obj
+                self.dismiss(("subtask", parent_task))
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+class SubtaskReminderModal(ModalScreen[bool]):
+    DEFAULT_CSS = """
+    SubtaskReminderModal { align: center middle; }
+    SubtaskReminderModal > Container {
+        width: 50; height: auto; max-height: 20; border: thick $warning;
+        background: $surface; padding: 1 2;
+    }
+    SubtaskReminderModal .modal-title { 
+        text-align: center; text-style: bold; 
+        width: 100%; height: auto;
+        color: $warning;
+        margin-bottom: 1;
+    }
+    SubtaskReminderModal .subtask-info {
+        width: 100%; height: auto;
+        padding: 1;
+        background: $surface-lighten-1;
+        border: solid $primary-background;
+        margin-bottom: 1;
+    }
+    SubtaskReminderModal .subtask-text { 
+        width: 100%; height: auto;
+        text-align: center;
+        margin: 0 0 1 0;
+    }
+    SubtaskReminderModal .parent-info {
+        width: 100%; height: auto;
+        text-align: center;
+        color: $text-muted;
+        margin-bottom: 0;
+    }
+    SubtaskReminderModal .button-row { 
+        width: 100%; height: auto; 
+        align: center middle;
+        margin-top: 1;
+    }
+    SubtaskReminderModal Button { margin: 0 1; }
+    """
+    
+    BINDINGS = [
+        Binding("escape", "close", show=False),
+        Binding("enter", "close", show=False),
+        Binding("space", "close", show=False),
+    ]
+    
+    def __init__(self, subtask: Subtask, parent_text: str, group_name: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.subtask_data = subtask
+        self.parent_text = parent_text
+        self.group_name = group_name
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("⏰ Recordatorio de Subtarea", classes="modal-title")
+            with Container(classes="subtask-info"):
+                yield Label("La siguiente subtarea vence HOY:", classes="parent-info")
+                yield Label(f"↳ {self.subtask_data.text}", classes="subtask-text")
+                yield Label(f"🔗 Tarea: {self.parent_text}", classes="parent-info")
+                yield Label(f"📁 Grupo: {self.group_name}", classes="parent-info")
+            with Horizontal(classes="button-row"):
+                yield Button("Entendido", variant="primary", id="ok")
+    
+    @on(Button.Pressed, "#ok")
+    def on_ok(self) -> None:
+        self.dismiss(True)
+    
+    def action_close(self) -> None:
+        self.dismiss(True)
+    
+    def on_key(self, event) -> None:
+        if event.key not in ["escape", "enter", "space"]:
+            event.prevent_default()
+            event.stop()
 
 class ImageViewerModal(ModalScreen[bool]):
     DEFAULT_CSS = """
@@ -454,7 +1064,88 @@ class ImageViewerModal(ModalScreen[bool]):
     
     def action_close(self) -> None:
         self.dismiss(True)
+
+class EditSubtaskModal(ModalScreen[Optional[dict]]):
+    DEFAULT_CSS = """
+    EditSubtaskModal { align: center middle; }
+    EditSubtaskModal > Container {
+        width: 78; height: auto; max-height: 90%; border: thick $primary;
+        background: $surface; padding: 1 2; overflow-y: auto;
+    }
+    EditSubtaskModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    EditSubtaskModal .section-label { margin-top: 1; color: $text-muted; }
+    EditSubtaskModal Input { width: 100%; margin-bottom: 1; }
+    EditSubtaskModal .comments-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
+    EditSubtaskModal .comments-display { width: 1fr; padding: 0 1; }
+    EditSubtaskModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
+    EditSubtaskModal Button { margin: 0 1; }
+    """
+    BINDINGS = [Binding("escape", "cancel", show=False)]
+    
+    def __init__(self, subtask_text: str, comments: list[Comment] = None, 
+                 next_comment_id: int = 1, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.subtask_text = subtask_text
+        self.comments = comments or []
+        self.next_comment_id = next_comment_id
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("✏️ Editar Subtarea", classes="modal-title")
+            yield Label("Texto:", classes="section-label")
+            yield Input(value=self.subtask_text, id="subtask-input")
+            yield Label("Comentarios:", classes="section-label")
+            with Horizontal(classes="comments-row"):
+                yield Label(self._format_comments(), id="comments-display", classes="comments-display")
+                yield Button("💬 Gestionar", id="manage-comments")
+            with Horizontal(classes="button-row"):
+                yield Button("Guardar", variant="primary", id="save")
+                yield Button("Cancelar", variant="default", id="cancel")
+    
+    def _format_comments(self) -> str:
+        count = len(self.comments)
+        if count == 0:
+            return "Sin comentarios"
+        elif count == 1:
+            return "💬 1 comentario"
+        else:
+            return f"💬 {count} comentarios"
+    
+    def on_mount(self) -> None:
+        self.query_one("#subtask-input", Input).focus()
+    
+    @on(Button.Pressed, "#manage-comments")
+    def on_manage_comments(self) -> None:
+        def on_result(updated_comments: list[Comment]) -> None:
+            self.comments = updated_comments
+            if self.comments:
+                self.next_comment_id = max(c.id for c in self.comments) + 1
+            self.query_one("#comments-display", Label).update(self._format_comments())
+        self.app.push_screen(CommentsModal(self.comments, self.next_comment_id), on_result)
+    
+    @on(Button.Pressed, "#save")
+    def on_save(self) -> None:
+        text = self.query_one("#subtask-input", Input).value.strip()
+        if not text:
+            self.app.notify("El texto de la subtarea no puede estar vacío", severity="warning")
+            return
         
+        self.dismiss({
+            "text": text,
+            "comments": self.comments
+        })
+    
+    @on(Button.Pressed, "#cancel")
+    def on_cancel(self) -> None:
+        self.dismiss(None)
+    
+    @on(Input.Submitted)
+    def on_submit(self) -> None:
+        self.on_save()
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
 class TaskWidget(Static):
     DEFAULT_CSS = """
     TaskWidget {
@@ -481,6 +1172,7 @@ class TaskWidget(Static):
     TaskWidget .task-text { width: 1fr; height: 1; }
     TaskWidget .tag { background: #90EE90; color: #000000; }
     TaskWidget .tag-separator { width: 1; }
+    TaskWidget .task-subtasks { width: 6; height: 1; text-align: right; color: $accent; }
     TaskWidget .task-links { width: 3; height: 1; text-align: right; color: $accent; }
     TaskWidget .task-images { width: 3; height: 1; text-align: right; color: $primary; }
     TaskWidget .task-comments { width: 5; height: 1; text-align: right; color: $primary; }
@@ -493,6 +1185,7 @@ class TaskWidget(Static):
     TaskWidget.done .task-comments { color: $text-muted; }
     TaskWidget.done .task-links { color: $text-muted; }
     TaskWidget.done .task-images { color: $text-muted; }
+    TaskWidget.done .task-subtasks { color: $text-muted; }
     TaskWidget.done .task-group { color: $text-muted; }
     TaskWidget.done .priority { color: $text-muted; }
     """
@@ -535,6 +1228,14 @@ class TaskWidget(Static):
                     tag_name = tag.name[:10] if len(tag.name) > 10 else tag.name
                     yield Label(f" {tag_name} ", classes="tag")
                     yield Label(" ", classes="tag-separator")
+        
+        if self.task_data.subtasks:
+            done_count = sum(1 for s in self.task_data.subtasks if s.done)
+            total_count = len(self.task_data.subtasks)
+            subtasks_str = f"📋{done_count}/{total_count}"
+        else:
+            subtasks_str = ""
+        yield Label(subtasks_str, classes="task-subtasks")
         
         links_count = sum(1 for c in self.task_data.comments if c.url)
         links_str = f"🔗{links_count}" if links_count > 0 else ""
@@ -2250,14 +2951,18 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     EditTaskModal .tags-display { width: 1fr; padding: 0 1; }
     EditTaskModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
     EditTaskModal Button { margin: 0 1; }
+    EditTaskModal .subtasks-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
+    EditTaskModal .subtasks-display { width: 1fr; padding: 0 1; }
     """
     BINDINGS = [Binding("escape", "cancel", show=False)]
     
     def __init__(self, task_text: str, current_date: Optional[str] = None,
-                 current_group_id: Optional[int] = None, groups: list[Group] = None,
-                 comments: list[Comment] = None, next_comment_id: int = 1,
-                 all_tags: list[Tag] = None, selected_tag_ids: list[int] = None,
-                 current_priority: int = 0, **kwargs) -> None:
+                current_group_id: Optional[int] = None, groups: list[Group] = None,
+                comments: list[Comment] = None, next_comment_id: int = 1,
+                all_tags: list[Tag] = None, selected_tag_ids: list[int] = None,
+                current_priority: int = 0, 
+                subtasks: list = None, next_subtask_id: int = 1,
+                **kwargs) -> None:
         super().__init__(**kwargs)
         self.task_text = task_text
         self.selected_date = current_date
@@ -2268,6 +2973,8 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
         self.all_tags = all_tags or []
         self.selected_tag_ids = list(selected_tag_ids) if selected_tag_ids else []
         self.selected_priority = current_priority
+        self.subtasks = subtasks or []
+        self.next_subtask_id = next_subtask_id
     
     def compose(self) -> ComposeResult:
         with Container():
@@ -2295,10 +3002,14 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
             with Horizontal(classes="comments-row"):
                 yield Label(self._format_comments(), id="comments-display", classes="comments-display")
                 yield Button("💬 Gestionar", id="manage-comments")
+            yield Label("Subtareas:", classes="section-label")
+            with Horizontal(classes="subtasks-row"):
+                yield Label(self._format_subtasks(), id="subtasks-display", classes="subtasks-display")
+                yield Button("📋 Gestionar", id="manage-subtasks")
             with Horizontal(classes="button-row"):
                 yield Button("Guardar", variant="primary", id="save")
                 yield Button("Cancelar", variant="default", id="cancel")
-    
+
     def _format_date(self, date_str: Optional[str]) -> str:
         if not date_str: return "Sin fecha"
         try:
@@ -2347,6 +3058,30 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     
     def on_mount(self) -> None:
         self.query_one("#task-input", Input).focus()
+    
+    def _format_subtasks(self) -> str:
+        count = len(self.subtasks)
+        if count == 0:
+            return "Sin subtareas"
+        done_count = sum(1 for s in self.subtasks if s.done)
+        return f"📋 {done_count}/{count} completadas"
+
+    @on(Button.Pressed, "#manage-subtasks")
+    def on_manage_subtasks(self) -> None:
+        def on_result(updated_subtasks: list) -> None:
+            self.subtasks = updated_subtasks
+            if self.subtasks:
+                self.next_subtask_id = max(s.id for s in self.subtasks) + 1
+            self.query_one("#subtasks-display", Label).update(self._format_subtasks())
+        
+        next_comment_id = self.next_comment_id
+        for subtask in self.subtasks:
+            if subtask.comments:
+                max_id = max(c.id for c in subtask.comments)
+                if max_id >= next_comment_id:
+                    next_comment_id = max_id + 1
+        
+        self.app.push_screen(SubtasksModal(self.subtasks, self.next_subtask_id, next_comment_id), on_result)  
     
     @on(Button.Pressed, "#change-group")
     def on_change_group(self) -> None:
@@ -2410,7 +3145,8 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
             "group_id": self.selected_group_id,
             "comments": self.comments,
             "tags": self.selected_tag_ids,
-            "priority": self.selected_priority
+            "priority": self.selected_priority,
+            "subtasks": self.subtasks
         } if text else None)
     
     @on(Button.Pressed, "#cancel")
@@ -3248,6 +3984,7 @@ class TodoApp(App):
         self.next_task_id = 1
         self.next_group_id = 1
         self.next_tag_id = 1
+        self.next_subtask_id = 1 
         self.selected_index = 0
         self.GENERAL_GROUP_ID = -1
         self.current_group_id: Optional[int] = self.GENERAL_GROUP_ID
@@ -3313,13 +4050,20 @@ class TodoApp(App):
 
     def action_today_tasks(self) -> None:
         today = date.today()
-        tasks = self._get_tasks_for_date(today.year, today.month, today.day)
+        tasks, subtasks = self._get_tasks_for_date(today.year, today.month, today.day)
         date_str = f"{today.day}/{today.month}/{today.year}"
-        self.push_screen(DayTasksModal(tasks, date_str), lambda t: self._go_to_task(t) if t else None)
+        
+        def on_result(result):
+            if result:
+                item_type, item_obj = result
+                self._go_to_task(item_obj)
+        
+        self.push_screen(DayItemsModal(tasks, subtasks, date_str), on_result)
     
     def show_today_reminders(self) -> None:
         today_str = date.today().strftime("%Y-%m-%d")
         today_tasks = []
+        today_subtasks = []
         
         for task in self.tasks:
             if task.due_date == today_str and not task.done:
@@ -3329,13 +4073,36 @@ class TodoApp(App):
                     group = next((g for g in self.groups if g.id == task.group_id), None)
                     group_name = group.name if group else "Sin grupo"
                 today_tasks.append((task, group_name))
+            
+            for subtask in task.subtasks:
+                if subtask.due_date == today_str and not subtask.done:
+                    if task.group_id is None:
+                        group_name = "Sin grupo"
+                    else:
+                        group = next((g for g in self.groups if g.id == task.group_id), None)
+                        group_name = group.name if group else "Sin grupo"
+                    parent_info = f"{task.text[:30]}..." if len(task.text) > 30 else task.text
+                    today_subtasks.append((subtask, parent_info, group_name))
+        
+        all_reminders = []
+        
+        for task, group_name in today_tasks:
+            all_reminders.append(("task", task, group_name, None))
+        
+        for subtask, parent_info, group_name in today_subtasks:
+            all_reminders.append(("subtask", subtask, group_name, parent_info))
         
         def show_next(index=0):
-            if index < len(today_tasks):
-                task, group_name = today_tasks[index]
+            if index < len(all_reminders):
+                item_type, item_obj, group_name, parent_info = all_reminders[index]
+                
                 def on_close(result):
                     show_next(index + 1)
-                self.push_screen(ReminderModal(task, group_name), on_close)
+                
+                if item_type == "task":
+                    self.push_screen(ReminderModal(item_obj, group_name), on_close)
+                else:
+                    self.push_screen(SubtaskReminderModal(item_obj, parent_info, group_name), on_close)
         
         show_next()
     
@@ -3399,9 +4166,12 @@ class TodoApp(App):
         
         return tasks
     
-    def _get_tasks_for_date(self, y: int, m: int, d: int) -> list[tuple[Task, str]]:
+    def _get_tasks_for_date(self, y: int, m: int, d: int) -> tuple[list[tuple], list[tuple]]:
         date_str = f"{y:04d}-{m:02d}-{d:02d}"
-        result = []
+        
+        tasks_result = []
+        subtasks_result = []
+        
         for t in self.tasks:
             if t.due_date == date_str:
                 if t.group_id is None:
@@ -3409,8 +4179,18 @@ class TodoApp(App):
                 else:
                     g = next((x for x in self.groups if x.id == t.group_id), None)
                     gname = g.name if g else "Sin grupo"
-                result.append((t, gname))
-        return result
+                tasks_result.append((t, gname))
+            
+            for subtask in t.subtasks:
+                if subtask.due_date == date_str:
+                    if t.group_id is None:
+                        gname = "Sin grupo"
+                    else:
+                        g = next((x for x in self.groups if x.id == t.group_id), None)
+                        gname = g.name if g else "Sin grupo"
+                    subtasks_result.append((subtask, t, gname))
+        
+        return tasks_result, subtasks_result
     
     async def refresh_view(self) -> None:
         task_list = self.query_one("#task-list", Container)
@@ -3462,36 +4242,65 @@ class TodoApp(App):
                     week_str += "    "
                 else:
                     current = date(self.cal_year, self.cal_month, day)
-                    has_tasks = any(t.due_date == current.strftime("%Y-%m-%d") for t in self.tasks)
+                    date_str = current.strftime("%Y-%m-%d")
+                    
+                    has_tasks = any(t.due_date == date_str for t in self.tasks)
+                    has_subtasks = any(
+                        any(st.due_date == date_str for st in t.subtasks)
+                        for t in self.tasks
+                    )
                     
                     if day == self.cal_day:
                         week_str += f"[bold cyan][{day:2d}][/bold cyan]"
                     elif current == today:
-                        week_str += f"[bold green]•{day:2d} [/bold green]" if has_tasks else f"[bold green] {day:2d} [/bold green]"
-                    elif has_tasks:
-                        week_str += f"[yellow]•{day:2d} [/yellow]"
+                        if has_tasks and has_subtasks:
+                            week_str += f"[bold #D2B48C]{day:2d}◆[/bold #D2B48C]"
+                        elif has_subtasks:
+                            week_str += f"[bold #FFA500]{day:2d}▪[/bold #FFA500]"
+                        elif has_tasks:
+                            week_str += f"[bold green]{day:2d}•[/bold green]"
+                        else:
+                            week_str += f"[bold green] {day:2d} [/bold green]"
                     else:
-                        week_str += f" {day:2d} "
+                        if has_tasks and has_subtasks:
+                            week_str += f"[#D2B48C]{day:2d}◆[/#D2B48C]"
+                        elif has_subtasks:
+                            week_str += f"[#FFA500]{day:2d}▪[/#FFA500]"
+                        elif has_tasks:
+                            week_str += f"[yellow]{day:2d}•[/yellow]"
+                        else:
+                            week_str += f" {day:2d} "
             lines.append(week_str)
         
         self.query_one("#calendar-display", Static).update("\n".join(lines))
         
-        tasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
+        tasks, subtasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
         day_tasks = self.query_one("#calendar-day-tasks", Static)
         
-        if tasks:
-            lines = [f"📋 {len(tasks)} tarea(s):"]
-            for t, gname in tasks[:3]:
+        total_items = len(tasks) + len(subtasks)
+        
+        if total_items > 0:
+            lines = [f"📋 {len(tasks)} tarea(s) | 📝 {len(subtasks)} subtarea(s):"]
+            
+            for t, gname in tasks[:2]:
                 cb = "☑" if t.done else "☐"
                 txt = t.text[:30] + "..." if len(t.text) > 30 else t.text
-                group_text = f"Grupo: {gname}"
-                padding = " " * max(1, 50 - len(txt) - len(group_text))
+                group_text = f"📁 {gname}"
+                padding = " " * max(1, 45 - len(txt) - len(group_text))
                 lines.append(f"  {cb} {txt}{padding}{group_text}")
-            if len(tasks) > 3:
-                lines.append(f"  ... y {len(tasks) - 3} más")
+            
+            for st, parent, gname in subtasks[:2]:
+                cb = "☑" if st.done else "☐"
+                txt = st.text[:25] + "..." if len(st.text) > 25 else st.text
+                parent_txt = parent.text[:15] + "..." if len(parent.text) > 15 else parent.text
+                lines.append(f"  {cb} ↳ {txt} 🔗 {parent_txt}")
+            
+            if total_items > 4:
+                lines.append(f"  ... y {total_items - 4} más")
+            
             day_tasks.update("\n".join(lines))
         else:
-            day_tasks.update("No hay tareas para este día")
+            day_tasks.update("No hay tareas ni subtareas para este día")
     
     def _update_selection(self, pending: list, completed: list) -> None:
         all_tasks = pending + completed
@@ -3563,9 +4372,12 @@ class TodoApp(App):
     
     def update_stats(self) -> None:
         if self.calendar_mode:
-            tasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
-            total, done = len(tasks), sum(1 for t, _ in tasks if t.done)
-            text = f"📅 {self.cal_day}/{self.cal_month}/{self.cal_year} | Tareas: {total} | Completadas: {done}"
+            tasks, subtasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
+            total_tasks = len(tasks)
+            total_subtasks = len(subtasks)
+            done_tasks = sum(1 for t, _ in tasks if t.done)
+            done_subtasks = sum(1 for st, _, _ in subtasks if st.done)
+            text = f"📅 {self.cal_day}/{self.cal_month}/{self.cal_year} | Tareas: {total_tasks} ({done_tasks} ✓) | Subtareas: {total_subtasks} ({done_subtasks} ✓)"
         else:
             c = self._get_current_tasks()
             total, done = len(c), sum(1 for t in c if t.done)
@@ -3644,6 +4456,8 @@ class TodoApp(App):
             
             if filters:
                 text += " | Filtros: " + ", ".join(filters)
+
+        self.query_one("#stats", Static).update(text)
 
         self.query_one("#stats", Static).update(text)
     
@@ -3759,9 +4573,15 @@ class TodoApp(App):
     
     def action_action_enter(self) -> None:
         if self.calendar_mode:
-            tasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
+            tasks, subtasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
             date_str = f"{self.cal_day}/{self.cal_month}/{self.cal_year}"
-            self.push_screen(DayTasksModal(tasks, date_str), lambda t: self._go_to_task(t) if t else None)
+            
+            def on_result(result):
+                if result:
+                    item_type, item_obj = result
+                    self._go_to_task(item_obj)
+            
+            self.push_screen(DayItemsModal(tasks, subtasks, date_str), on_result)
         else:
             self.action_toggle_done()
     
@@ -3813,31 +4633,42 @@ class TodoApp(App):
         if not self.calendar_mode:
             return
         
-        unscheduled_tasks = [t for t in self.tasks if t.due_date is None and not t.done]
+        has_unscheduled = any(
+            (t.due_date is None and not t.done) or
+            any(st.due_date is None and not st.done for st in t.subtasks)
+            for t in self.tasks
+        )
         
-        if not unscheduled_tasks:
-            self.notify("No hay tareas sin fecha para asignar", severity="information", timeout=3)
+        if not has_unscheduled:
+            self.notify("No hay tareas ni subtareas sin fecha para asignar", severity="information", timeout=3)
             return
         
-        async def on_result(selected_task_ids: Optional[list[int]]) -> None:
-            if selected_task_ids:
+        async def on_result(result: Optional[dict]) -> None:
+            if result:
                 self._save_undo_state()
                 selected_date = f"{self.cal_year:04d}-{self.cal_month:02d}-{self.cal_day:02d}"
                 
-                count = 0
-                for task in self.tasks:
-                    if task.id in selected_task_ids:
-                        task.due_date = selected_date
-                        count += 1
+                task_ids = result.get("task_ids", [])
+                subtask_selections = result.get("subtask_selections", [])
                 
+                for task in self.tasks:
+                    if task.id in task_ids:
+                        task.due_date = selected_date
+                
+                for task in self.tasks:
+                    for subtask in task.subtasks:
+                        if (task.id, subtask.id) in subtask_selections:
+                            subtask.due_date = selected_date
+                
+                count = len(task_ids) + len(subtask_selections)
                 if count > 0:
                     self.save_data()
                     self.refresh_calendar()
                     self.update_stats()
-                    self.notify(f"📅 {count} tarea(s) asignada(s) (Ctrl+Z para deshacer)", 
+                    self.notify(f"📅 {count} elemento(s) asignado(s) (Ctrl+Z para deshacer)", 
                             severity="information", timeout=2)
         
-        self.push_screen(UnscheduledTasksModal(unscheduled_tasks, self.groups), on_result)
+        self.push_screen(UnscheduledItemsModal(self.tasks, self.groups), on_result)
     
     def action_filter_tasks(self) -> None:
         if self.calendar_mode: return
@@ -3941,27 +4772,22 @@ class TodoApp(App):
         self.update_stats()
         self.save_data()
     
-    def action_manage_tags(self) -> None:
-        async def on_result(updated_tags: list[Tag]) -> None:
-            if updated_tags is not None:
-                if updated_tags != self.tags:
-                    self._save_undo_state()
-                    
-                    old_tag_ids = {t.id for t in self.tags}
-                    new_tag_ids = {t.id for t in updated_tags}
-                    deleted_tag_ids = old_tag_ids - new_tag_ids
-                    
-                    if deleted_tag_ids:
-                        for task in self.tasks:
-                            task.tags = [tid for tid in task.tags if tid not in deleted_tag_ids]
-                    
-                    self.tags = updated_tags
-                    if self.tags:
-                        self.next_tag_id = max(t.id for t in self.tags) + 1
-                    self.save_data()
-                    await self.refresh_view()
-                    self.notify("🏷️ Etiquetas actualizadas (Ctrl+Z para deshacer)", severity="information", timeout=2)
-        self.push_screen(TagsManagerModal(self.tags, self.next_tag_id), on_result)
+    def action_manage_comments(self) -> None:
+        if not self.subtasks or self.selected_index < 0:
+            return
+        subtask = self.subtasks[self.selected_index]
+        
+        next_comment_id = self.next_comment_id
+        if subtask.comments:
+            next_comment_id = max(c.id for c in subtask.comments) + 1
+        
+        def on_result(updated_comments: list[Comment]) -> None:
+            subtask.comments = updated_comments
+            if subtask.comments:
+                self.next_comment_id = max(c.id for c in subtask.comments) + 1
+            self.call_later(self.refresh_subtasks_list)
+        
+        self.app.push_screen(CommentsModal(subtask.comments, next_comment_id), on_result)
     
     def action_add_task(self) -> None:
         if self.calendar_mode:
@@ -3995,6 +4821,10 @@ class TodoApp(App):
         if t.comments:
             next_comment_id = max(c.id for c in t.comments) + 1
         
+        next_subtask_id = 1
+        if t.subtasks:
+            next_subtask_id = max(s.id for s in t.subtasks) + 1
+        
         async def on_result(result: Optional[dict]) -> None:
             if result:
                 self._save_undo_state()
@@ -4003,6 +4833,7 @@ class TodoApp(App):
                 t.comments = result.get("comments", [])
                 t.tags = result.get("tags", [])
                 t.priority = result.get("priority", 0)
+                t.subtasks = result.get("subtasks", [])
                 old_group_id = t.group_id
                 new_group_id = result.get("group_id")
                 t.group_id = new_group_id
@@ -4019,7 +4850,10 @@ class TodoApp(App):
                         break
                 self.update_selection()
                 self.notify("✏️ Tarea editada (Ctrl+Z para deshacer)", severity="information", timeout=2)
-        self.push_screen(EditTaskModal(t.text, t.due_date, t.group_id, self.groups, t.comments, next_comment_id, self.tags, t.tags, t.priority), on_result)
+        
+        self.push_screen(EditTaskModal(t.text, t.due_date, t.group_id, self.groups, 
+                                    t.comments, next_comment_id, self.tags, t.tags, 
+                                    t.priority, t.subtasks, next_subtask_id), on_result)
         
     def action_delete_task(self) -> None:
         if self.calendar_mode: return
@@ -4045,6 +4879,7 @@ class TodoApp(App):
             "next_task_id": self.next_task_id,
             "next_group_id": self.next_group_id,
             "next_tag_id": self.next_tag_id,
+            "next_subtask_id": self.next_subtask_id,
             "current_group_id": self.current_group_id,
             "selected_index": self.selected_index,
             "groups": [{"id": g.id, "name": g.name} for g in self.groups],
@@ -4056,11 +4891,29 @@ class TodoApp(App):
                 "created_at": t.created_at,
                 "group_id": t.group_id,
                 "due_date": t.due_date,
-                "comments": [{"id": c.id, "text": c.text, "url": c.url, 
-                            "image_path": c.image_path, "created_at": c.created_at}
-                            for c in t.comments],
+                "comments": [{
+                    "id": c.id, 
+                    "text": c.text, 
+                    "url": c.url, 
+                    "image_path": c.image_path, 
+                    "created_at": c.created_at
+                } for c in t.comments],
                 "tags": list(t.tags),
-                "priority": t.priority
+                "priority": t.priority,
+                "subtasks": [{
+                    "id": s.id, 
+                    "text": s.text, 
+                    "done": s.done,
+                    "created_at": s.created_at, 
+                    "due_date": s.due_date,
+                    "comments": [{
+                        "id": c.id, 
+                        "text": c.text, 
+                        "url": c.url,
+                        "image_path": c.image_path, 
+                        "created_at": c.created_at
+                    } for c in s.comments]
+                } for s in t.subtasks]
             } for t in self.tasks]
         }
 
@@ -4077,6 +4930,7 @@ class TodoApp(App):
         self.next_task_id = state["next_task_id"]
         self.next_group_id = state["next_group_id"]
         self.next_tag_id = state["next_tag_id"]
+        self.next_subtask_id = state.get("next_subtask_id", 1)
         self.current_group_id = state["current_group_id"]
         self.selected_index = state["selected_index"]
         
@@ -4086,10 +4940,34 @@ class TodoApp(App):
         
         self.tasks = []
         for t in state["tasks"]:
-            comments = [Comment(id=c["id"], text=c["text"], url=c.get("url"), 
-                            image_path=c.get("image_path"),
-                            created_at=c.get("created_at", "")) 
-                    for c in t["comments"]]
+            comments = [Comment(
+                id=c["id"], 
+                text=c["text"], 
+                url=c.get("url"), 
+                image_path=c.get("image_path"),
+                created_at=c.get("created_at", "")
+            ) for c in t["comments"]]
+            
+            subtasks = []
+            for s in t.get("subtasks", []):
+                subtask_comments = [Comment(
+                    id=c["id"], 
+                    text=c["text"], 
+                    url=c.get("url"),
+                    image_path=c.get("image_path"),
+                    created_at=c.get("created_at", "")
+                ) for c in s.get("comments", [])]
+                
+                subtask = Subtask(
+                    id=s["id"], 
+                    text=s["text"], 
+                    done=s.get("done", False),
+                    created_at=s.get("created_at", ""),
+                    due_date=s.get("due_date"),
+                    comments=subtask_comments
+                )
+                subtasks.append(subtask)
+            
             task = Task(
                 id=t["id"],
                 text=t["text"],
@@ -4099,7 +4977,8 @@ class TodoApp(App):
                 due_date=t["due_date"],
                 comments=comments,
                 tags=list(t["tags"]),
-                priority=t["priority"]
+                priority=t["priority"],
+                subtasks=subtasks
             )
             self.tasks.append(task)
 
@@ -4151,21 +5030,43 @@ class TodoApp(App):
                 "next_task_id": self.next_task_id,
                 "next_group_id": self.next_group_id,
                 "next_tag_id": self.next_tag_id,
+                "next_subtask_id": self.next_subtask_id,
                 "groups": [{"id": g.id, "name": g.name} for g in self.groups],
                 "tags": [{"id": t.id, "name": t.name} for t in self.tags],
-                "tasks": [{"id": t.id, "text": t.text, "done": t.done, "created_at": t.created_at,
-                        "group_id": t.group_id, "due_date": t.due_date,
-                        "comments": [{"id": c.id, "text": c.text, "url": c.url, 
-                                    "image_path": c.image_path, "created_at": c.created_at} 
-                                    for c in t.comments],
-                        "tags": t.tags, "priority": t.priority} for t in self.tasks]
+                "tasks": [{
+                    "id": t.id, 
+                    "text": t.text, 
+                    "done": t.done, 
+                    "created_at": t.created_at,
+                    "group_id": t.group_id, 
+                    "due_date": t.due_date,
+                    "comments": [{"id": c.id, "text": c.text, "url": c.url, 
+                                "image_path": c.image_path, "created_at": c.created_at} 
+                                for c in t.comments],
+                    "tags": t.tags, 
+                    "priority": t.priority,
+                    "subtasks": [{
+                        "id": s.id, 
+                        "text": s.text, 
+                        "done": s.done,
+                        "created_at": s.created_at, 
+                        "due_date": s.due_date,
+                        "comments": [{
+                            "id": c.id, 
+                            "text": c.text, 
+                            "url": c.url,
+                            "image_path": c.image_path, 
+                            "created_at": c.created_at
+                        } for c in s.comments]
+                    } for s in t.subtasks]
+                } for t in self.tasks]
             }
         try: 
             self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         except Exception as e:
             print(f"Error guardando datos: {e}")
             self.notify(f"❌ Error al guardar: {e}", severity="error", timeout=3)
-
+        
     def load_data(self) -> None:
         try:
             if self.data_file.exists():
@@ -4173,6 +5074,7 @@ class TodoApp(App):
                 self.next_task_id = data.get("next_task_id", 1)
                 self.next_group_id = data.get("next_group_id", 1)
                 self.next_tag_id = data.get("next_tag_id", 1)
+                self.next_subtask_id = data.get("next_subtask_id", 1)
                 self.groups = [Group(id=g["id"], name=g["name"]) for g in data.get("groups", [])]
                 self.tags = [Tag(id=t["id"], name=t["name"]) for t in data.get("tags", [])]
                 self.tasks = []
@@ -4181,15 +5083,44 @@ class TodoApp(App):
                                     image_path=c.get("image_path"),
                                     created_at=c.get("created_at", ""))
                             for c in t.get("comments", [])]
-                    task = Task(id=t["id"], text=t["text"], done=t.get("done", False),
-                            created_at=t.get("created_at", ""), group_id=t.get("group_id"),
-                            due_date=t.get("due_date"), comments=comments, tags=t.get("tags", []),
-                            priority=t.get("priority", 0))
+                    
+                    subtasks = []
+                    for s in t.get("subtasks", []):
+                        subtask_comments = [Comment(
+                            id=c["id"], 
+                            text=c["text"], 
+                            url=c.get("url"),
+                            image_path=c.get("image_path"),
+                            created_at=c.get("created_at", "")
+                        ) for c in s.get("comments", [])]
+                        
+                        subtask = Subtask(
+                            id=s["id"], 
+                            text=s["text"], 
+                            done=s.get("done", False),
+                            created_at=s.get("created_at", ""),
+                            due_date=s.get("due_date"),
+                            comments=subtask_comments
+                        )
+                        subtasks.append(subtask)
+                    
+                    task = Task(
+                        id=t["id"], 
+                        text=t["text"], 
+                        done=t.get("done", False),
+                        created_at=t.get("created_at", ""), 
+                        group_id=t.get("group_id"),
+                        due_date=t.get("due_date"), 
+                        comments=comments, 
+                        tags=t.get("tags", []),
+                        priority=t.get("priority", 0), 
+                        subtasks=subtasks
+                    )
                     self.tasks.append(task)
         except Exception as e:
             self.tasks, self.groups, self.tags = [], [], []
-            self.next_task_id = self.next_group_id = self.next_tag_id = 1
-
+            self.next_task_id = self.next_group_id = self.next_tag_id = self.next_subtask_id = 1
+        
 def main():
     TodoApp().run()
 
