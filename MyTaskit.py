@@ -4233,7 +4233,15 @@ class TodoApp(App):
         
         cal = calendar.Calendar(firstweekday=0)
         today = date.today()
-        lines = ["  ".join(DIAS_SEMANA), "─" * 26]
+        lines = ["   ".join(DIAS_SEMANA), "─" * 26]
+        
+        legend = (
+            "\n"
+            "[bold green]●[/bold green] Hoy  "
+            "[yellow]●[/yellow] Tareas  "
+            "[#FFA500]●[/#FFA500] Subtareas  "
+            "[#D2B48C]●[/#D2B48C] Ambas"
+        )
         
         for week in cal.monthdayscalendar(self.cal_year, self.cal_month):
             week_str = ""
@@ -4254,24 +4262,26 @@ class TodoApp(App):
                         week_str += f"[bold cyan][{day:2d}][/bold cyan]"
                     elif current == today:
                         if has_tasks and has_subtasks:
-                            week_str += f"[bold #D2B48C]{day:2d}◆[/bold #D2B48C]"
+                            week_str += f"[bold #D2B48C]{day:2d}•[/bold #D2B48C]"
                         elif has_subtasks:
-                            week_str += f"[bold #FFA500]{day:2d}▪[/bold #FFA500]"
+                            week_str += f"[bold #FFA500]{day:2d}•[/bold #FFA500]"
                         elif has_tasks:
                             week_str += f"[bold green]{day:2d}•[/bold green]"
                         else:
                             week_str += f"[bold green] {day:2d} [/bold green]"
                     else:
                         if has_tasks and has_subtasks:
-                            week_str += f"[#D2B48C]{day:2d}◆[/#D2B48C]"
+                            week_str += f"[#D2B48C]{day:2d}•[/#D2B48C]"
                         elif has_subtasks:
-                            week_str += f"[#FFA500]{day:2d}▪[/#FFA500]"
+                            week_str += f"[#FFA500]{day:2d}•[/#FFA500]"
                         elif has_tasks:
                             week_str += f"[yellow]{day:2d}•[/yellow]"
                         else:
                             week_str += f" {day:2d} "
             lines.append(week_str)
         
+        lines.append(legend)
+            
         self.query_one("#calendar-display", Static).update("\n".join(lines))
         
         tasks, subtasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
