@@ -1,95 +1,7 @@
 #!/usr/bin/env python3
-"""
-MyTaskit v1.1 – Gestor de tareas para terminal
-Fecha: 2026-01-22
-
-Aplicación de tareas con grupos, calendario, etiquetas, filtros y
-sistema completo de deshacer/rehacer (hasta 50 niveles).
-
-Uso:
-    python MyTaskit.py
-    ./MyTaskit.py   (si le das permiso de ejecución)
-
-Controles principales:
-  a - Añadir tarea (no disponible en grupo General)
-  e - Editar tarea (texto, fecha, grupo, comentarios, etiquetas)
-  d - Eliminar tarea
-  f - Filtrar tareas (por fecha, etiquetas y estado)
-  o - Ordenar tareas (alfabético, fecha, prioridad)
-  / - Buscar tareas por texto
-  i - Ver tareas de hoy
-  Ctrl+Z - Deshacer última acción
-  Ctrl+Y - Rehacer acción deshecha
-  Espacio - Marcar/Desmarcar tarea como completada
-  q - Salir
-
-Gestión de grupos:
-  g - Crear nuevo grupo
-  G - Editar/Eliminar grupo (no disponible en General ni Sin grupo)
-  ←/→ o h/l - Navegar entre grupos
-  Tab: General → Sin grupo → Grupos personalizados
-
-Grupos especiales:
-  📚 General - Muestra TODAS las tareas (sin permitir crear nuevas)
-  📋 Sin grupo - Tareas sin grupo asignado
-
-Gestión de etiquetas:
-  T - Gestionar etiquetas globales (crear, editar, eliminar)
-  (Las etiquetas se asignan desde la edición de tareas)
-
-Gestión de comentarios:
-  💬 Comentarios con enlaces (URLs)
-  🔗 Icono indica comentarios con enlaces
-  Enter - Abrir enlace del comentario seleccionado
-
-Modo calendario:
-  c - Activar/Desactivar modo calendario
-  ←/→/↑/↓ - Navegar días
-  n/p - Mes siguiente/anterior
-  t - Ir a hoy
-  Enter - Ver tareas del día seleccionado
-  Espacio - Ir al grupo de la tarea (desde vista de tareas del día)
-
-Navegación de tareas:
-  ↑/↓ o k/j - Navegar entre tareas
-  Enter - Marcar/Desmarcar como completada (modo normal)
-
-Filtros disponibles:
-  📅 Fecha - Múltiples fechas (Sin fecha o fechas específicas)
-  🏷️ Etiquetas - Múltiples etiquetas (modo AND)
-  ✅ Estado - Pendientes y/o Completadas
-  ⭐ Prioridad - Sin prioridad, Baja, Media, Alta
-
-Ordenación disponible:
-  🔤 Alfabético - A→Z o Z→A
-  📅 Fecha - Más próximas o más lejanas primero
-  ⭐ Prioridad - Alta→Baja o Baja→Alta
-  (Se pueden combinar múltiples criterios)
-
-Sistema de Deshacer/Rehacer:
-  • Ctrl+Z - Deshacer última acción (hasta 50 acciones)
-  • Ctrl+Y - Rehacer acción deshecha
-  • Funciona con: crear, editar, eliminar tareas/grupos/etiquetas
-  • Restaura estado completo (tareas, grupos, etiquetas, selección)
-  • Se limpia al hacer una nueva acción tras deshacer
-
-Características:
-  • Auto-guardado cada 10 segundos (silencioso)
-  • Guardado automático al salir
-  • Recordatorios de tareas que vencen hoy
-  • Comentarios en tareas con enlaces opcionales
-  • Hasta 2 etiquetas visibles por tarea
-  • Visualización de fecha de vencimiento
-  • Contador de comentarios y enlaces
-  • Separación visual de tareas completadas
-  • Estadísticas en tiempo real
-  • Búsqueda global de tareas
-  • Sistema completo de deshacer/rehacer
-  • Tema Dracula por defecto
-"""
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, Static
 from textual.binding import Binding
@@ -185,6 +97,17 @@ class UndoableInput(Input):
             event.stop()
             self.cursor_position = 0
             self.selection = (0, len(self.value))
+        elif event.key == "ctrl+x":
+            event.prevent_default()
+            event.stop()
+            if self.value:
+                try:
+                    import pyperclip
+                    pyperclip.copy(self.value)
+                except:
+                    pass
+                self.value = ""
+                self.cursor_position = 0
 
 class UndoableTextArea(TextArea):
     def __init__(self, *args, **kwargs):
@@ -260,6 +183,20 @@ class UndoableTextArea(TextArea):
             event.prevent_default()
             event.stop()
             self.select_all()
+        elif event.key == "ctrl+x":
+            event.prevent_default()
+            event.stop()
+            if self.text:
+                try:
+                    import pyperclip
+                    pyperclip.copy(self.text)
+                except:
+                    pass
+                self.text = ""
+                try:
+                    self.move_cursor((0, 0))
+                except:
+                    pass
 
 MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 DIAS_SEMANA = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
@@ -301,9 +238,41 @@ class Subtask:
 class Tag:
     id: int
     name: str
-    
+
     def __post_init__(self):
         self.name = self.name[:30]
+
+@dataclass
+class Note:
+    id: int
+    title: str
+    description: str = ""
+    url: Optional[str] = None
+    image_path: Optional[str] = None
+    file_path: Optional[str] = None
+    created_at: str = ""
+    tags: list = None
+
+    def __post_init__(self):
+        if not self.created_at:
+            self.created_at = datetime.now().isoformat()
+        if self.tags is None:
+            self.tags = []
+
+@dataclass
+class Canvas:
+    id: int
+    title: str
+    width: int = 50
+    height: int = 20
+    grid: list = None
+    created_at: str = ""
+
+    def __post_init__(self):
+        if not self.created_at:
+            self.created_at = datetime.now().isoformat()
+        if self.grid is None:
+            self.grid = [[" " for _ in range(self.width)] for _ in range(self.height)]
 
 @dataclass
 class Task:
@@ -336,7 +305,7 @@ class Group:
 class SubtasksModal(ModalScreen[list]):
     DEFAULT_CSS = """
     SubtasksModal { align: center middle; }
-    SubtasksModal > Container {
+    SubtasksModal > VerticalScroll {
         width: 90; height: 38; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -412,7 +381,7 @@ class SubtasksModal(ModalScreen[list]):
         self.filter_priorities: list[int] = []
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("📋 Subtareas", classes="modal-title")
             yield UndoableInput(placeholder="🔍 Buscar subtareas (/) ...", id="search-input")
             yield Label("", id="filter-status")
@@ -429,7 +398,11 @@ class SubtasksModal(ModalScreen[list]):
     
     async def on_mount(self) -> None:
         await self.refresh_subtasks_list()
-    
+        try:
+            self.query_one("#search-input", Input).blur()
+        except:
+            pass
+
     def _filter_subtasks(self) -> list[Subtask]:
         filtered = self.subtasks
 
@@ -756,7 +729,7 @@ class SubtasksModal(ModalScreen[list]):
 class UnscheduledItemsModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     UnscheduledItemsModal { align: center middle; }
-    UnscheduledItemsModal > Container {
+    UnscheduledItemsModal > VerticalScroll {
         width: 80; height: 32; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -819,7 +792,7 @@ class UnscheduledItemsModal(ModalScreen[Optional[dict]]):
         return group.name if group else "Sin grupo"
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("📅 Asignar fecha desde calendario", classes="modal-title")
             yield Label("Selecciona tareas y/o subtareas para asignarles la fecha del calendario", classes="info-text")
             yield Container(id="items-list")
@@ -949,7 +922,7 @@ class UnscheduledItemsModal(ModalScreen[Optional[dict]]):
 class DayItemsModal(ModalScreen[Optional[tuple]]):
     DEFAULT_CSS = """
     DayItemsModal { align: center middle; }
-    DayItemsModal > Container {
+    DayItemsModal > VerticalScroll {
         width: 80; height: 26; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -1000,7 +973,7 @@ class DayItemsModal(ModalScreen[Optional[tuple]]):
         self.selected_index = 0 if self.all_items else -1
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(f"📅 {self.date_str}", classes="modal-title")
             yield Container(id="items-list")
             yield Label("↑↓ Navegar | Espacio/Enter: Ir a la tarea | Esc: Cerrar", classes="hint")
@@ -1075,7 +1048,7 @@ class DayItemsModal(ModalScreen[Optional[tuple]]):
 class SubtaskReminderModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     SubtaskReminderModal { align: center middle; }
-    SubtaskReminderModal > Container {
+    SubtaskReminderModal > VerticalScroll {
         width: 50; height: auto; max-height: 20; border: thick $warning;
         background: $surface; padding: 1 2;
     }
@@ -1124,7 +1097,7 @@ class SubtaskReminderModal(ModalScreen[bool]):
         self.group_name = group_name
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("⏰ Recordatorio de Subtarea", classes="modal-title")
             with Container(classes="subtask-info"):
                 yield Label("La siguiente subtarea vence HOY:", classes="parent-info")
@@ -1149,7 +1122,7 @@ class SubtaskReminderModal(ModalScreen[bool]):
 class ImageViewerModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     ImageViewerModal { align: center middle; }
-    ImageViewerModal > Container {
+    ImageViewerModal > VerticalScroll {
         width: 95%; 
         height: 95%; 
         border: thick $primary;
@@ -1197,7 +1170,7 @@ class ImageViewerModal(ModalScreen[bool]):
         self.image_path = image_path
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(f"📷 {Path(self.image_path).name}", classes="modal-title")
             yield Static(id="image-container")
             yield Static("", id="info-text", classes="info-text")
@@ -1448,7 +1421,7 @@ class ImageViewerModal(ModalScreen[bool]):
 class EditSubtaskModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     EditSubtaskModal { align: center middle; }
-    EditSubtaskModal > Container {
+    EditSubtaskModal > VerticalScroll {
         width: 78; height: auto; max-height: 90%; border: thick $primary;
         background: $surface; padding: 1 2; overflow-y: auto;
     }
@@ -1480,7 +1453,7 @@ class EditSubtaskModal(ModalScreen[Optional[dict]]):
         self.due_date = due_date
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("✏️ Editar Subtarea", classes="modal-title")
             yield Label("Texto:", classes="section-label")
             yield UndoableInput(value=self.subtask_text, id="subtask-input")
@@ -1760,10 +1733,344 @@ class TaskWidget(Static):
         if self.task_data.done:
             self.add_class("done")
 
+class NoteWidget(Static):
+    DEFAULT_CSS = """
+    NoteWidget {
+        width: 100%;
+        height: 3;
+        padding: 0 1;
+        border: solid $primary-background;
+        margin-bottom: 1;
+        layout: horizontal;
+    }
+    NoteWidget:hover { background: $boost; }
+    NoteWidget.selected {
+        border: solid $accent;
+        background: $surface-lighten-1;
+    }
+    NoteWidget .note-icon { width: 4; height: 1; }
+    NoteWidget .note-title { width: 1fr; height: 1; }
+    NoteWidget .tag { background: #90EE90; color: #000000; }
+    NoteWidget .tag-separator { width: 1; }
+    NoteWidget .note-link { width: 4; height: 1; text-align: right; color: $accent; }
+    NoteWidget .note-image { width: 4; height: 1; text-align: right; color: $primary; }
+    NoteWidget .note-file { width: 4; height: 1; text-align: right; color: $warning; }
+    NoteWidget .note-time { width: 12; height: 1; text-align: right; color: $text-muted; }
+    """
+
+    def __init__(self, note_data: Note, all_tags: list[Tag] = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.note_data = note_data
+        self.all_tags = all_tags or []
+        self._selected = False
+
+    def compose(self) -> ComposeResult:
+        yield Label("📝", classes="note-icon")
+        yield Label(self.note_data.title, classes="note-title")
+
+        if self.note_data.tags:
+            for tag_id in self.note_data.tags:
+                tag = next((t for t in self.all_tags if t.id == tag_id), None)
+                if tag:
+                    tag_name = tag.name[:10] if len(tag.name) > 10 else tag.name
+                    yield Label(f" {tag_name} ", classes="tag")
+                    yield Label(" ", classes="tag-separator")
+
+        link_str = "🔗" if self.note_data.url else ""
+        yield Label(link_str, classes="note-link")
+
+        image_str = "📷" if self.note_data.image_path else ""
+        yield Label(image_str, classes="note-image")
+
+        file_str = "📎" if self.note_data.file_path else ""
+        yield Label(file_str, classes="note-file")
+
+        yield Label(self.note_data.created_at, classes="note-time")
+
+    @property
+    def selected(self) -> bool:
+        return self._selected
+
+    @selected.setter
+    def selected(self, value: bool) -> None:
+        self._selected = value
+        self.set_class(value, "selected")
+
+class CanvasWidget(Static):
+    DEFAULT_CSS = """
+    CanvasWidget {
+        width: 100%;
+        height: 3;
+        padding: 0 1;
+        border: solid $primary-background;
+        margin-bottom: 1;
+        layout: horizontal;
+    }
+    CanvasWidget:hover { background: $boost; }
+    CanvasWidget.selected {
+        border: solid $accent;
+        background: $surface-lighten-1;
+    }
+    CanvasWidget .canvas-icon { width: 4; height: 1; }
+    CanvasWidget .canvas-title { width: 1fr; height: 1; }
+    CanvasWidget .canvas-size { width: 12; height: 1; text-align: right; color: $text-muted; }
+    CanvasWidget .canvas-time { width: 12; height: 1; text-align: right; color: $text-muted; }
+    """
+
+    def __init__(self, canvas_data: Canvas, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.canvas_data = canvas_data
+        self._selected = False
+
+    def compose(self) -> ComposeResult:
+        yield Label("🎨", classes="canvas-icon")
+        yield Label(self.canvas_data.title, classes="canvas-title")
+
+        size_str = f"{self.canvas_data.width}x{self.canvas_data.height}"
+        yield Label(size_str, classes="canvas-size")
+
+        yield Label(self.canvas_data.created_at, classes="canvas-time")
+
+    @property
+    def selected(self) -> bool:
+        return self._selected
+
+    @selected.setter
+    def selected(self, value: bool) -> None:
+        self._selected = value
+        self.set_class(value, "selected")
+
+class CanvasEditorModal(ModalScreen[Optional[dict]]):
+    DEFAULT_CSS = """
+    CanvasEditorModal { align: center middle; }
+    CanvasEditorModal > VerticalScroll {
+        width: 90%; max-width: 120; height: 90%;
+        border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    CanvasEditorModal .modal-title {
+        text-align: center; text-style: bold;
+        width: 100%; margin-bottom: 1;
+    }
+    CanvasEditorModal .section-label {
+        margin-top: 1; margin-bottom: 0;
+        color: $text-muted;
+    }
+    CanvasEditorModal #title-input {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    CanvasEditorModal .tools-row {
+        width: 100%; height: auto;
+        align: left middle; margin-bottom: 1;
+        layout: horizontal;
+    }
+    CanvasEditorModal .colors-row {
+        width: 100%; height: auto;
+        align: left middle; margin-bottom: 1;
+        layout: horizontal;
+    }
+    CanvasEditorModal .canvas-container {
+        width: 100%; height: auto;
+        border: solid $primary;
+        padding: 0;
+        margin-bottom: 1;
+        background: #000000;
+    }
+    CanvasEditorModal #canvas-display {
+        width: 100%;
+        height: auto;
+    }
+    CanvasEditorModal .button-row {
+        width: 100%; height: auto;
+        align: center middle; margin-top: 1;
+    }
+    CanvasEditorModal Button { margin: 0 1; }
+    CanvasEditorModal .tool-button {
+        min-width: 12;
+    }
+    CanvasEditorModal .tool-button.active {
+        background: $accent;
+    }
+    CanvasEditorModal .color-button {
+        min-width: 8;
+    }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
+
+    def __init__(self, canvas_data: Canvas = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.canvas_data = canvas_data or Canvas(id=0, title="Nueva Pizarra", width=50, height=20)
+        self.current_tool = "draw"
+        self.current_color = "[white]█[/white]"
+        self.is_drawing = False
+        self.color_map = {
+            "white": "[white]█[/white]",
+            "red": "[red]█[/red]",
+            "blue": "[blue]█[/blue]",
+            "green": "[green]█[/green]",
+            "yellow": "[yellow]█[/yellow]",
+            "magenta": "[magenta]█[/magenta]",
+            "cyan": "[cyan]█[/cyan]"
+        }
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll():
+            yield Label("🎨 Editar Pizarra", classes="modal-title")
+
+            yield Label("Título:", classes="section-label")
+            yield UndoableInput(value=self.canvas_data.title, id="title-input")
+
+            yield Label("Herramientas:", classes="section-label")
+            with Horizontal(classes="tools-row"):
+                yield Button("✏️ Dibujar", id="tool-draw", classes="tool-button active")
+                yield Button("🗑️ Borrar", id="tool-erase", classes="tool-button")
+                yield Button("🧹 Limpiar", id="tool-clear", classes="tool-button")
+
+            yield Label("Colores:", classes="section-label")
+            with Horizontal(classes="colors-row"):
+                yield Button("⬜ Blanco", id="color-white", classes="color-button")
+                yield Button("🟥 Rojo", id="color-red", classes="color-button")
+                yield Button("🟦 Azul", id="color-blue", classes="color-button")
+                yield Button("🟩 Verde", id="color-green", classes="color-button")
+                yield Button("🟨 Amarillo", id="color-yellow", classes="color-button")
+                yield Button("🟪 Magenta", id="color-magenta", classes="color-button")
+                yield Button("🟦 Cian", id="color-cyan", classes="color-button")
+
+            yield Label("Canvas (Click y arrastra para dibujar):", classes="section-label")
+            yield Container(Static("", id="canvas-display"), classes="canvas-container")
+
+            with Horizontal(classes="button-row"):
+                yield Button("Guardar", variant="primary", id="save")
+                yield Button("Cancelar", variant="default", id="cancel")
+
+    async def on_mount(self) -> None:
+        self.query_one("#title-input", Input).focus()
+        self.render_canvas()
+
+    def render_canvas(self) -> None:
+        lines = []
+        for row in self.canvas_data.grid:
+            line = ""
+            for cell in row:
+                if cell == " ":
+                    line += " "
+                else:
+                    line += cell
+            lines.append(line)
+
+        canvas_text = "\n".join(lines)
+        self.query_one("#canvas-display", Static).update(canvas_text)
+
+    @on(Button.Pressed, "#tool-draw")
+    def on_tool_draw(self) -> None:
+        self.current_tool = "draw"
+        self.query_one("#tool-draw", Button).add_class("active")
+        self.query_one("#tool-erase", Button).remove_class("active")
+
+    @on(Button.Pressed, "#tool-erase")
+    def on_tool_erase(self) -> None:
+        self.current_tool = "erase"
+        self.query_one("#tool-erase", Button).add_class("active")
+        self.query_one("#tool-draw", Button).remove_class("active")
+
+    @on(Button.Pressed, "#tool-clear")
+    def on_tool_clear(self) -> None:
+        self.canvas_data.grid = [[" " for _ in range(self.canvas_data.width)]
+                                  for _ in range(self.canvas_data.height)]
+        self.render_canvas()
+
+    @on(Button.Pressed, "#color-white")
+    def on_color_white(self) -> None:
+        self.current_color = self.color_map["white"]
+
+    @on(Button.Pressed, "#color-red")
+    def on_color_red(self) -> None:
+        self.current_color = self.color_map["red"]
+
+    @on(Button.Pressed, "#color-blue")
+    def on_color_blue(self) -> None:
+        self.current_color = self.color_map["blue"]
+
+    @on(Button.Pressed, "#color-green")
+    def on_color_green(self) -> None:
+        self.current_color = self.color_map["green"]
+
+    @on(Button.Pressed, "#color-yellow")
+    def on_color_yellow(self) -> None:
+        self.current_color = self.color_map["yellow"]
+
+    @on(Button.Pressed, "#color-magenta")
+    def on_color_magenta(self) -> None:
+        self.current_color = self.color_map["magenta"]
+
+    @on(Button.Pressed, "#color-cyan")
+    def on_color_cyan(self) -> None:
+        self.current_color = self.color_map["cyan"]
+
+    def on_mouse_down(self, event) -> None:
+        canvas_widget = self.query_one("#canvas-display", Static)
+        if canvas_widget.region.contains(event.screen_x, event.screen_y):
+            self.is_drawing = True
+            self._draw_at_position(event)
+
+    def on_mouse_move(self, event) -> None:
+        if self.is_drawing:
+            self._draw_at_position(event)
+
+    def on_mouse_up(self, event) -> None:
+        self.is_drawing = False
+
+    def _draw_at_position(self, event) -> None:
+        canvas_widget = self.query_one("#canvas-display", Static)
+        region = canvas_widget.region
+
+        if not region.contains(event.screen_x, event.screen_y):
+            return
+
+        rel_x = event.screen_x - region.x
+        rel_y = event.screen_y - region.y
+
+        if 0 <= rel_y < self.canvas_data.height and 0 <= rel_x < self.canvas_data.width:
+            if self.current_tool == "draw":
+                self.canvas_data.grid[rel_y][rel_x] = self.current_color
+            elif self.current_tool == "erase":
+                self.canvas_data.grid[rel_y][rel_x] = " "
+
+            self.render_canvas()
+
+    def action_save(self) -> None:
+        title = self.query_one("#title-input", Input).value.strip()
+
+        if not title:
+            self.app.notify("El título es obligatorio", severity="error", timeout=2)
+            return
+
+        self.dismiss({
+            "title": title,
+            "grid": self.canvas_data.grid,
+            "width": self.canvas_data.width,
+            "height": self.canvas_data.height
+        })
+
+    @on(Button.Pressed, "#save")
+    def on_save_btn(self) -> None:
+        self.action_save()
+
+    @on(Button.Pressed, "#cancel")
+    def on_cancel_btn(self) -> None:
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
 class PriorityPickerModal(ModalScreen[Optional[int]]):
     DEFAULT_CSS = """
     PriorityPickerModal { align: center middle; }
-    PriorityPickerModal > Container {
+    PriorityPickerModal > VerticalScroll {
         width: 40; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -1795,7 +2102,7 @@ class PriorityPickerModal(ModalScreen[Optional[int]]):
         self.selected_index = current_priority
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("⭐ Seleccionar Prioridad", classes="modal-title")
             yield Container(id="priority-list")
             yield Label("↑↓ Navegar | Enter: Seleccionar | Esc: Cancelar", classes="hint")
@@ -1865,7 +2172,7 @@ class PriorityPickerModal(ModalScreen[Optional[int]]):
 class InputModal(ModalScreen[Optional[str]]):
     DEFAULT_CSS = """
     InputModal { align: center middle; }
-    InputModal > Container {
+    InputModal > VerticalScroll {
         width: 60; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -1886,7 +2193,7 @@ class InputModal(ModalScreen[Optional[str]]):
         self.placeholder_text = placeholder
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(self.title_text, classes="modal-title")
             yield UndoableInput(value=self.initial_text, placeholder=self.placeholder_text, id="modal-input")
             with Horizontal(classes="button-row"):
@@ -1927,7 +2234,7 @@ class InputModal(ModalScreen[Optional[str]]):
 class ReminderModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     ReminderModal { align: center middle; }
-    ReminderModal > Container {
+    ReminderModal > VerticalScroll {
         width: 50; height: auto; max-height: 20; border: thick $warning;
         background: $surface; padding: 1 2;
     }
@@ -1975,7 +2282,7 @@ class ReminderModal(ModalScreen[bool]):
         self.group_name = group_name
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("⏰ Recordatorio de Tarea", classes="modal-title")
             with Container(classes="task-info"):
                 yield Label("La siguiente tarea vence HOY:", classes="group-info")
@@ -1999,7 +2306,7 @@ class ReminderModal(ModalScreen[bool]):
 class GroupPickerModal(ModalScreen[Optional[int]]):
     DEFAULT_CSS = """
     GroupPickerModal { align: center middle; }
-    GroupPickerModal > Container {
+    GroupPickerModal > VerticalScroll {
         width: 50; height: auto; max-height: 20; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -2037,7 +2344,7 @@ class GroupPickerModal(ModalScreen[Optional[int]]):
                 self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("📁 Seleccionar Grupo", classes="modal-title")
             yield Container(id="groups-list")
             yield Label("↑↓ Navegar | Enter: Seleccionar | Esc: Cancelar", classes="hint")
@@ -2082,7 +2389,7 @@ class GroupPickerModal(ModalScreen[Optional[int]]):
 class CommentEditModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     CommentEditModal { align: center middle; }
-    CommentEditModal > Container {
+    CommentEditModal > VerticalScroll {
         width: 82; height: 50; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -2141,7 +2448,7 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
         self.files_dir.mkdir(exist_ok=True, parents=True)
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(self.modal_title, classes="modal-title")
             yield Label("Título del comentario:", classes="section-label")
             yield UndoableInput(value=self.initial_title, placeholder="Título breve...", id="title-input")
@@ -2559,10 +2866,320 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
     def on_destroy(self) -> None:
         pass
 
+class NoteEditModal(ModalScreen[Optional[dict]]):
+    DEFAULT_CSS = """
+    NoteEditModal { align: center middle; }
+    NoteEditModal > VerticalScroll {
+        width: 82; height: 50; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    NoteEditModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
+    NoteEditModal .section-label { margin-top: 1; margin-bottom: 0; color: $text-muted; }
+    NoteEditModal #title-input {
+        width: 100%;
+        margin-bottom: 0;
+    }
+    NoteEditModal #description-input {
+        width: 100%;
+        height: 8;
+        margin-bottom: 0;
+        border: solid $primary;
+        padding: 1;
+    }
+    NoteEditModal Input { width: 100%; margin-bottom: 0; }
+    NoteEditModal .image-info {
+        width: 100%;
+        padding: 1;
+        background: $surface-lighten-1;
+        border: solid $primary-background;
+        margin-bottom: 0;
+        color: $success;
+    }
+    NoteEditModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 2; }
+    NoteEditModal .image-button-row {
+        width: 100%;
+        height: auto;
+        align: left middle;
+        margin-bottom: 0;
+        layout: horizontal;
+    }
+    NoteEditModal .tags-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
+    NoteEditModal .tags-display { width: 1fr; padding: 0 1; }
+    NoteEditModal Button { margin: 0 1; }
+    NoteEditModal #image-info-container { margin-bottom: 0; }
+    NoteEditModal #file-info-container { margin-bottom: 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
+
+    def __init__(self, modal_title: str = "📝 Nota", initial_title: str = "",
+                 initial_description: str = "", initial_url: str = "", initial_image: str = "",
+                 initial_file: str = "", all_tags: list[Tag] = None, selected_tag_ids: list[int] = None,
+                 **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.modal_title = modal_title
+        self.initial_title = initial_title
+        self.initial_description = initial_description
+        self.initial_url = initial_url or ""
+        self.current_image_path = initial_image or ""
+        self.current_file_path = initial_file or ""
+        self.all_tags = all_tags or []
+        self.selected_tag_ids = list(selected_tag_ids) if selected_tag_ids else []
+        self.images_dir = Path.home() / "todo" / "images"
+        self.images_dir.mkdir(exist_ok=True, parents=True)
+        self.files_dir = Path.home() / "todo" / "files"
+        self.files_dir.mkdir(exist_ok=True, parents=True)
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll():
+            yield Label(self.modal_title, classes="modal-title")
+            yield Label("Título de la nota:", classes="section-label")
+            yield UndoableInput(value=self.initial_title, placeholder="Título breve...", id="title-input")
+            yield Label("Descripción (opcional - Enter para nueva línea):", classes="section-label")
+            yield UndoableTextArea(self.initial_description, id="description-input", show_line_numbers=False)
+            yield Label("Enlace (opcional):", classes="section-label")
+            yield UndoableInput(value=self.initial_url, placeholder="https://ejemplo.com ", id="url-input")
+            yield Label("Imagen (opcional):", classes="section-label")
+            yield Horizontal(id="image-button-row", classes="image-button-row")
+            yield Container(id="image-info-container")
+            yield Label("Archivo adjunto (opcional):", classes="section-label")
+            yield Horizontal(id="file-button-row", classes="image-button-row")
+            yield Container(id="file-info-container")
+            yield Label("Etiquetas:", classes="section-label")
+            with Horizontal(classes="tags-row"):
+                yield Label(self._format_tags(), id="tags-display", classes="tags-display")
+                yield Button("🏷️ Seleccionar", id="select-tags")
+            with Horizontal(classes="button-row"):
+                yield Button("Guardar", variant="primary", id="save")
+                yield Button("Cancelar", variant="default", id="cancel")
+
+    def _format_tags(self) -> str:
+        if not self.selected_tag_ids:
+            return "Sin etiquetas"
+        tag_names = []
+        for tag_id in self.selected_tag_ids:
+            tag = next((t for t in self.all_tags if t.id == tag_id), None)
+            if tag:
+                tag_names.append(tag.name)
+        return ", ".join(tag_names) if tag_names else "Sin etiquetas"
+
+    async def on_mount(self) -> None:
+        self.query_one("#title-input", Input).focus()
+        await self._update_image_buttons()
+        await self._update_file_buttons()
+
+    async def _update_image_buttons(self) -> None:
+        button_row = self.query_one("#image-button-row", Horizontal)
+        await button_row.remove_children()
+
+        await button_row.mount(Button("📋 Pegar", variant="default", id="paste-image"))
+        await button_row.mount(Button("📁 Examinar", variant="default", id="browse-image"))
+        await button_row.mount(Button("✏️ Ruta", variant="default", id="path-image"))
+
+        if self.current_image_path:
+            await button_row.mount(Button("🗑️ Eliminar", variant="error", id="remove-image"))
+
+        info_container = self.query_one("#image-info-container", Container)
+        await info_container.remove_children()
+
+        if self.current_image_path:
+            await info_container.mount(Label(f"✓ {Path(self.current_image_path).name}", classes="image-info"))
+
+    async def _update_file_buttons(self) -> None:
+        button_row = self.query_one("#file-button-row", Horizontal)
+        await button_row.remove_children()
+
+        await button_row.mount(Button("📁 Examinar", variant="default", id="browse-file"))
+        await button_row.mount(Button("✏️ Ruta", variant="default", id="path-file"))
+
+        if self.current_file_path:
+            await button_row.mount(Button("🗑️ Eliminar", variant="error", id="remove-file"))
+
+        info_container = self.query_one("#file-info-container", Container)
+        await info_container.remove_children()
+
+        if self.current_file_path:
+            await info_container.mount(Label(f"✓ {Path(self.current_file_path).name}", classes="image-info"))
+
+    @on(Button.Pressed, "#select-tags")
+    async def on_select_tags(self) -> None:
+        def on_tags_selected(result: Optional[list[int]]) -> None:
+            if result is not None:
+                self.selected_tag_ids = result
+                self.query_one("#tags-display", Label).update(self._format_tags())
+
+        self.app.push_screen(TagPickerModal(all_tags=self.all_tags, selected_tag_ids=self.selected_tag_ids), on_tags_selected)
+
+    @on(Button.Pressed, "#paste-image")
+    async def on_paste_image(self) -> None:
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grabclipboard()
+            if img:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"note_image_{timestamp}.png"
+                filepath = self.images_dir / filename
+                img.save(str(filepath))
+                self.current_image_path = str(filepath)
+                await self._update_image_buttons()
+                self.app.notify("✓ Imagen pegada desde el portapapeles", severity="information", timeout=2)
+            else:
+                self.app.notify("No hay imagen en el portapapeles", severity="warning", timeout=2)
+        except ImportError:
+            self.app.notify("Instala 'pillow' para usar esta función: pip install pillow", severity="error", timeout=3)
+        except Exception as e:
+            self.app.notify(f"Error al pegar imagen: {e}", severity="error", timeout=3)
+
+    @on(Button.Pressed, "#browse-image")
+    async def on_browse_image(self) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            filepath = filedialog.askopenfilename(
+                title="Seleccionar imagen",
+                filetypes=[("Imágenes", "*.png *.jpg *.jpeg *.gif *.bmp"), ("Todos", "*.*")]
+            )
+            root.destroy()
+
+            if filepath:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                ext = Path(filepath).suffix
+                new_filename = f"note_image_{timestamp}{ext}"
+                new_filepath = self.images_dir / new_filename
+                import shutil
+                shutil.copy2(filepath, new_filepath)
+                self.current_image_path = str(new_filepath)
+                await self._update_image_buttons()
+                self.app.notify(f"✓ Imagen añadida", severity="information", timeout=2)
+        except Exception as e:
+            self.app.notify(f"Error al seleccionar imagen: {e}", severity="error", timeout=3)
+
+    @on(Button.Pressed, "#path-image")
+    async def on_path_image(self) -> None:
+        def on_input(path: Optional[str]) -> None:
+            if path and Path(path).exists():
+                self.current_image_path = path
+                self.app.call_later(self._update_image_buttons)
+                self.app.notify("✓ Ruta de imagen establecida", severity="information", timeout=2)
+            elif path:
+                self.app.notify("La ruta no existe", severity="error", timeout=2)
+
+        self.app.push_screen(InputModal("Ruta de la imagen", placeholder="/ruta/a/imagen.png"), on_input)
+
+    @on(Button.Pressed, "#remove-image")
+    async def on_remove_image(self) -> None:
+        self.current_image_path = ""
+        await self._update_image_buttons()
+        self.app.notify("Imagen eliminada", severity="information", timeout=2)
+
+    @on(Button.Pressed, "#browse-file")
+    async def on_browse_file(self) -> None:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            filepath = filedialog.askopenfilename(
+                title="Seleccionar archivo",
+                filetypes=[("Todos", "*.*")]
+            )
+            root.destroy()
+
+            if filepath:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                ext = Path(filepath).suffix
+                safe_name = Path(filepath).stem[:30]
+                new_filename = f"note_file_{timestamp}_{safe_name}{ext}"
+                new_filepath = self.files_dir / new_filename
+                import shutil
+                shutil.copy2(filepath, new_filepath)
+                self.current_file_path = str(new_filepath)
+                await self._update_file_buttons()
+                self.app.notify(f"✓ Archivo añadido", severity="information", timeout=2)
+        except Exception as e:
+            self.app.notify(f"Error al seleccionar archivo: {e}", severity="error", timeout=3)
+
+    @on(Button.Pressed, "#path-file")
+    async def on_path_file(self) -> None:
+        def on_input(path: Optional[str]) -> None:
+            if path and Path(path).exists():
+                self.current_file_path = path
+                self.app.call_later(self._update_file_buttons)
+                self.app.notify("✓ Ruta de archivo establecida", severity="information", timeout=2)
+            elif path:
+                self.app.notify("La ruta no existe", severity="error", timeout=2)
+
+        self.app.push_screen(InputModal("Ruta del archivo", placeholder="/ruta/a/archivo.pdf"), on_input)
+
+    @on(Button.Pressed, "#remove-file")
+    async def on_remove_file(self) -> None:
+        self.current_file_path = ""
+        await self._update_file_buttons()
+        self.app.notify("Archivo eliminado", severity="information", timeout=2)
+
+    def action_save(self) -> None:
+        title = self.query_one("#title-input", Input).value.strip()
+        description = self.query_one("#description-input", TextArea).text.strip()
+        url = self.query_one("#url-input", Input).value.strip()
+
+        if not title:
+            self.app.notify("El título es obligatorio", severity="error", timeout=2)
+            return
+
+        self.dismiss({
+            "title": title,
+            "description": description,
+            "url": url if url else None,
+            "image_path": self.current_image_path if self.current_image_path else None,
+            "file_path": self.current_file_path if self.current_file_path else None,
+            "tags": self.selected_tag_ids
+        })
+
+    @on(Button.Pressed, "#save")
+    def on_save_btn(self) -> None:
+        self.action_save()
+
+    @on(Button.Pressed, "#cancel")
+    def on_cancel_btn(self) -> None:
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
+            return
+
+        if event.key == "ctrl+enter":
+            event.prevent_default()
+            event.stop()
+            text_area = self.query_one("#description-input", TextArea)
+            current_text = text_area.text
+            cursor_line, cursor_col = text_area.cursor_location
+            lines = current_text.split('\n')
+            if cursor_line < len(lines):
+                line = lines[cursor_line]
+                new_line = line[:cursor_col] + '\n' + line[cursor_col:]
+                lines[cursor_line] = new_line
+                text_area.text = '\n'.join(lines)
+            return
+
+    def on_destroy(self) -> None:
+        pass
+
 class CommentsModal(ModalScreen[list[Comment]]):
     DEFAULT_CSS = """
     CommentsModal { align: center middle; }
-    CommentsModal > Container {
+    CommentsModal > VerticalScroll {
         width: 82; height: 30; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -2604,7 +3221,7 @@ class CommentsModal(ModalScreen[list[Comment]]):
         self.selected_index = 0 if comments else -1
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("💬 Comentarios", classes="modal-title")
             yield Container(id="comments-list")
             yield Label("↑↓ Navegar | a: Añadir | e: Editar | d: Eliminar | Enter: Abrir enlace | v: Ver imagen | f: Abrir archivo | Esc: Cerrar", classes="hint")
@@ -2802,7 +3419,7 @@ class CommentsModal(ModalScreen[list[Comment]]):
 class TagsManagerModal(ModalScreen[list[Tag]]):
     DEFAULT_CSS = """
     TagsManagerModal { align: center middle; }
-    TagsManagerModal > Container {
+    TagsManagerModal > VerticalScroll {
         width: 65; height: 34; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -2846,7 +3463,7 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
         self.search_focused = False
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("🏷️  Gestionar Etiquetas", classes="modal-title")
             yield Label("🔍 Buscar (/ para activar, Tab para salir):", classes="search-label")
             yield UndoableInput(placeholder="Escribe para buscar etiquetas...", id="search-input")
@@ -2856,10 +3473,14 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
                 yield Button("➕ Añadir", variant="primary", id="add")
                 yield Button("✏️ Editar", variant="default", id="edit")
                 yield Button("🗑️ Eliminar", variant="error", id="delete")
-    
+
     async def on_mount(self) -> None:
         await self.refresh_tags_list()
-    
+        try:
+            self.query_one("#search-input", Input).blur()
+        except:
+            pass
+
     def _filter_tags(self) -> list[Tag]:
         if not self.search_query:
             return self.tags
@@ -3042,7 +3663,7 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
 class TagPickerModal(ModalScreen[list[int]]):
     DEFAULT_CSS = """
     TagPickerModal { align: center middle; }
-    TagPickerModal > Container {
+    TagPickerModal > VerticalScroll {
         width: 65; height: auto; max-height: 90%; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -3086,7 +3707,7 @@ class TagPickerModal(ModalScreen[list[int]]):
         self.search_focused = False
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("🏷️  Seleccionar Etiquetas", classes="modal-title")
             yield Label("🔍 Buscar (/ para activar, Tab para salir):", classes="search-label")
             yield UndoableInput(placeholder="Escribe para buscar etiquetas...", id="search-input")
@@ -3095,10 +3716,14 @@ class TagPickerModal(ModalScreen[list[int]]):
             with Horizontal(classes="button-row"):
                 yield Button("Guardar", variant="primary", id="save")
                 yield Button("Cancelar", variant="default", id="cancel")
-    
+
     async def on_mount(self) -> None:
         await self.refresh_tags_list()
-    
+        try:
+            self.query_one("#search-input", Input).blur()
+        except:
+            pass
+
     def _filter_tags(self) -> list[Tag]:
         if not self.search_query:
             return self.all_tags
@@ -3218,7 +3843,7 @@ class TagPickerModal(ModalScreen[list[int]]):
 class StatusFilterPickerModal(ModalScreen[Optional[list[str]]]):
     DEFAULT_CSS = """
     StatusFilterPickerModal { align: center middle; }
-    StatusFilterPickerModal > Container {
+    StatusFilterPickerModal > VerticalScroll {
         width: 40; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -3253,7 +3878,7 @@ class StatusFilterPickerModal(ModalScreen[Optional[list[str]]]):
         self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("✓ Filtrar por Estado", classes="modal-title")
             yield Container(id="status-list")
             yield Label("↑↓ Navegar | Espacio: Marcar/Desmarcar | Enter: Guardar | Esc: Cancelar", classes="hint")
@@ -3331,7 +3956,7 @@ class StatusFilterPickerModal(ModalScreen[Optional[list[str]]]):
 class PriorityFilterPickerModal(ModalScreen[Optional[list[int]]]):
     DEFAULT_CSS = """
     PriorityFilterPickerModal { align: center middle; }
-    PriorityFilterPickerModal > Container {
+    PriorityFilterPickerModal > VerticalScroll {
         width: 40; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -3366,7 +3991,7 @@ class PriorityFilterPickerModal(ModalScreen[Optional[list[int]]]):
         self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("⭐ Filtrar por Prioridad", classes="modal-title")
             yield Container(id="priority-list")
             yield Label("↑↓ Navegar | Espacio: Marcar/Desmarcar | Enter: Guardar | Esc: Cancelar", classes="hint")
@@ -3450,7 +4075,7 @@ class PriorityFilterPickerModal(ModalScreen[Optional[list[int]]]):
 class FilterModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     FilterModal { align: center middle; }
-    FilterModal > Container {
+    FilterModal > VerticalScroll {
         width: 70; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -3478,7 +4103,7 @@ class FilterModal(ModalScreen[Optional[dict]]):
         self.available_dates = available_dates
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("🔍 Filtrar Tareas", classes="modal-title")
             yield Label("Fecha:", classes="section-label")
             with Horizontal(classes="filter-row"):
@@ -3628,7 +4253,7 @@ class FilterModal(ModalScreen[Optional[dict]]):
 class DateFilterPickerModal(ModalScreen[Optional[list[str]]]):
     DEFAULT_CSS = """
     DateFilterPickerModal { align: center middle; }
-    DateFilterPickerModal > Container {
+    DateFilterPickerModal > VerticalScroll {
         width: 50; height: 26; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -3663,7 +4288,7 @@ class DateFilterPickerModal(ModalScreen[Optional[list[str]]]):
         self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("📅 Filtrar por Fecha", classes="modal-title")
             yield Container(id="dates-list")
             yield Label("↑↓ Navegar | Espacio: Marcar/Desmarcar | Enter: Guardar | Esc: Cancelar", classes="hint")
@@ -3748,7 +4373,7 @@ class DateFilterPickerModal(ModalScreen[Optional[list[str]]]):
 class EditTaskModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     EditTaskModal { align: center middle; }
-    EditTaskModal > Container {
+    EditTaskModal > VerticalScroll {
         width: 65; min-height: 48; max-height: 90%; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -3796,7 +4421,7 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
         self.next_subtask_id = next_subtask_id
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("✏️  Editar Tarea", classes="modal-title")
             yield Label("Texto:", classes="section-label")
             yield UndoableInput(value=self.task_text, id="task-input")
@@ -3987,7 +4612,7 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
 class DatePickerModal(ModalScreen[Optional[str]]):
     DEFAULT_CSS = """
     DatePickerModal { align: center middle; }
-    DatePickerModal > Container {
+    DatePickerModal > VerticalScroll {
         width: 36; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -4019,7 +4644,7 @@ class DatePickerModal(ModalScreen[Optional[str]]):
             self.selected_date = date.today()
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("📅 Seleccionar Fecha", classes="modal-title")
             yield Label("", id="month-label", classes="calendar-header")
             yield Static("", id="calendar-display", classes="calendar-display")
@@ -4103,7 +4728,7 @@ class DatePickerModal(ModalScreen[Optional[str]]):
 class ConfirmModal(ModalScreen[bool]):
     DEFAULT_CSS = """
     ConfirmModal { align: center middle; }
-    ConfirmModal > Container {
+    ConfirmModal > VerticalScroll {
         width: 50; height: auto; border: thick $error;
         background: $surface; padding: 1 2;
     }
@@ -4128,7 +4753,7 @@ class ConfirmModal(ModalScreen[bool]):
         self.selected_yes = True
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(self.message, classes="modal-title")
             with Horizontal(classes="button-row"):
                 yield Button("Sí", variant="error", id="yes")
@@ -4168,7 +4793,7 @@ class ConfirmModal(ModalScreen[bool]):
 class GroupOptionsModal(ModalScreen[str]):
     DEFAULT_CSS = """
     GroupOptionsModal { align: center middle; }
-    GroupOptionsModal > Container {
+    GroupOptionsModal > VerticalScroll {
         width: 40; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -4193,7 +4818,7 @@ class GroupOptionsModal(ModalScreen[str]):
         self.options = ["rename", "delete", ""]
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(f"Grupo: {self.group_name}", classes="modal-title")
             yield Button("✏️  Renombrar", variant="primary", id="rename")
             yield Button("🗑️  Eliminar grupo y tareas", variant="error", id="delete")
@@ -4239,7 +4864,7 @@ class GroupOptionsModal(ModalScreen[str]):
 class DayTasksModal(ModalScreen[Optional[Task]]):
     DEFAULT_CSS = """
     DayTasksModal { align: center middle; }
-    DayTasksModal > Container {
+    DayTasksModal > VerticalScroll {
         width: 70; height: 20; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -4274,7 +4899,7 @@ class DayTasksModal(ModalScreen[Optional[Task]]):
         self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(f"📅 Tareas del {self.date_str}", classes="modal-title")
             yield Container(id="tasks-list")
             yield Label("↑↓ Navegar | Espacio/Enter: Ir al grupo | Esc: Cerrar", classes="hint")
@@ -4323,7 +4948,7 @@ class DayTasksModal(ModalScreen[Optional[Task]]):
 class SearchResultsScreen(ModalScreen[Optional[Task]]):
     DEFAULT_CSS = """
     SearchResultsScreen { align: center middle; }
-    SearchResultsScreen > Container {
+    SearchResultsScreen > VerticalScroll {
         width: 90; height: 26; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -4355,7 +4980,7 @@ class SearchResultsScreen(ModalScreen[Optional[Task]]):
         self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(f"🔍 Resultados para '{self.search_term}'", classes="modal-title")
             yield Container(id="results-list")
             yield Label("↑↓ Navegar | Enter: Ir al grupo | Esc: Cerrar", classes="hint")
@@ -4419,7 +5044,7 @@ class SearchResultsScreen(ModalScreen[Optional[Task]]):
 class UnscheduledTasksModal(ModalScreen[Optional[list[int]]]):
     DEFAULT_CSS = """
     UnscheduledTasksModal { align: center middle; }
-    UnscheduledTasksModal > Container {
+    UnscheduledTasksModal > VerticalScroll {
         width: 70; height: 28; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -4456,7 +5081,7 @@ class UnscheduledTasksModal(ModalScreen[Optional[list[int]]]):
         self.selected_index = 0 if unscheduled_tasks else -1
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("📋 Tareas sin fecha", classes="modal-title")
             yield Label("Selecciona las tareas para asignarles la fecha del calendario", classes="info-text")
             yield Container(id="tasks-list")
@@ -4575,7 +5200,7 @@ class GroupTab(Static):
 class SortPickerModal(ModalScreen[Optional[dict[str, Optional[str]]]]):
     DEFAULT_CSS = """
     SortPickerModal { align: center middle; }
-    SortPickerModal > Container {
+    SortPickerModal > VerticalScroll {
         width: 70; height: auto; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -4628,7 +5253,7 @@ class SortPickerModal(ModalScreen[Optional[dict[str, Optional[str]]]]):
         self.selected_index = 0
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label("📊 Ordenar Tareas", classes="modal-title")
             yield Label("Prioridad: Prioridad → Fecha → Alfabético", classes="info-text")
             yield Container(id="sort-list")
@@ -4760,7 +5385,7 @@ class SortPickerModal(ModalScreen[Optional[dict[str, Optional[str]]]]):
 class EditDayItemsModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     EditDayItemsModal { align: center middle; }
-    EditDayItemsModal > Container {
+    EditDayItemsModal > VerticalScroll {
         width: 80; height: 32; border: thick $primary;
         background: $surface; padding: 1 2;
     }
@@ -4824,7 +5449,7 @@ class EditDayItemsModal(ModalScreen[Optional[dict]]):
         return group.name if group else "Sin grupo"
     
     def compose(self) -> ComposeResult:
-        with Container():
+        with VerticalScroll():
             yield Label(f"✏️ Editar {self.date_str}", classes="modal-title")
             yield Label("Selecciona tareas/subtareas para QUITAR la fecha", classes="info-text")
             yield Container(id="items-list")
@@ -5019,12 +5644,18 @@ class TodoApp(App):
         self.tasks: list[Task] = []
         self.groups: list[Group] = []
         self.tags: list[Tag] = []
+        self.notes: list[Note] = []
+        self.canvas_list: list[Canvas] = []
         self.next_task_id = 1
         self.next_group_id = 1
         self.next_tag_id = 1
-        self.next_subtask_id = 1 
+        self.next_subtask_id = 1
+        self.next_note_id = 1
+        self.next_canvas_id = 1
         self.selected_index = 0
         self.GENERAL_GROUP_ID = -1
+        self.NOTES_GROUP_ID = -2
+        self.CANVAS_GROUP_ID = -3
         self.current_group_id: Optional[int] = self.GENERAL_GROUP_ID
         self.data_file = Path.home() / "todo" / "todo_tasks.json"
         self.data_file.parent.mkdir(exist_ok=True)
@@ -5163,7 +5794,15 @@ class TodoApp(App):
             tab = GroupTab(None, "📋 Sin grupo", id="tab-all")
             await tabs.mount(tab)
             tab.active = (self.current_group_id is None)
-            
+
+            tab = GroupTab(self.NOTES_GROUP_ID, "📝 Notas", id="tab-notes")
+            await tabs.mount(tab)
+            tab.active = (self.current_group_id == self.NOTES_GROUP_ID)
+
+            tab = GroupTab(self.CANVAS_GROUP_ID, "🎨 Pizarra", id="tab-canvas")
+            await tabs.mount(tab)
+            tab.active = (self.current_group_id == self.CANVAS_GROUP_ID)
+
             for g in self.groups:
                 icon = "📂" if self.current_group_id == g.id else "📁"
                 t = GroupTab(g.id, f"{icon} {g.name}", id=f"tab-{g.id}")
@@ -5236,7 +5875,7 @@ class TodoApp(App):
     async def refresh_view(self) -> None:
         task_list = self.query_one("#task-list", Container)
         calendar_view = self.query_one("#calendar-view", Container)
-        
+
         if self.calendar_mode:
             task_list.styles.display = "none"
             calendar_view.add_class("visible")
@@ -5247,7 +5886,12 @@ class TodoApp(App):
             calendar_view.remove_class("visible")
             calendar_view.styles.display = "none"
             await task_list.remove_children()
-            await self._refresh_task_list(task_list)
+            if self.current_group_id == self.NOTES_GROUP_ID:
+                await self._refresh_notes_list(task_list)
+            elif self.current_group_id == self.CANVAS_GROUP_ID:
+                await self._refresh_canvas_list(task_list)
+            else:
+                await self._refresh_task_list(task_list)
     
     async def _refresh_task_list(self, task_list: Container) -> None:
         ordered = self._get_ordered_tasks()
@@ -5268,7 +5912,73 @@ class TodoApp(App):
                     await task_list.mount(w)
         
         self._update_selection(pending, completed)
-    
+
+    async def _refresh_notes_list(self, task_list: Container) -> None:
+        filtered_notes = self._get_filtered_notes()
+
+        if not filtered_notes:
+            msg = "No hay notas. Pulsa 'a' para añadir una."
+            await task_list.mount(Label(msg, id="empty-message"))
+        else:
+            for note in filtered_notes:
+                w = NoteWidget(note, all_tags=self.tags, id=f"note-{note.id}")
+                await task_list.mount(w)
+
+        self._update_selection_notes(filtered_notes)
+
+    def _get_filtered_notes(self) -> list[Note]:
+        notes = list(self.notes)
+
+        if self.filter_tag_ids:
+            notes = [n for n in notes if any(tag_id in n.tags for tag_id in self.filter_tag_ids)]
+
+        notes.sort(key=lambda n: n.created_at, reverse=True)
+        return notes
+
+    def _update_selection_notes(self, notes: list) -> None:
+        if not notes:
+            return
+
+        if self.selected_index >= len(notes):
+            self.selected_index = len(notes) - 1
+        if self.selected_index < 0:
+            self.selected_index = 0
+
+        for idx, note in enumerate(notes):
+            widget = self.query_one(f"#note-{note.id}", NoteWidget)
+            widget.selected = (idx == self.selected_index)
+
+    async def _refresh_canvas_list(self, task_list: Container) -> None:
+        filtered_canvas = self._get_filtered_canvas()
+
+        if not filtered_canvas:
+            msg = "No hay pizarras. Pulsa 'a' para añadir una."
+            await task_list.mount(Label(msg, id="empty-message"))
+        else:
+            for canvas in filtered_canvas:
+                w = CanvasWidget(canvas, id=f"canvas-{canvas.id}")
+                await task_list.mount(w)
+
+        self._update_selection_canvas(filtered_canvas)
+
+    def _get_filtered_canvas(self) -> list[Canvas]:
+        canvas_list = list(self.canvas_list)
+        canvas_list.sort(key=lambda c: c.created_at, reverse=True)
+        return canvas_list
+
+    def _update_selection_canvas(self, canvas_list: list) -> None:
+        if not canvas_list:
+            return
+
+        if self.selected_index >= len(canvas_list):
+            self.selected_index = len(canvas_list) - 1
+        if self.selected_index < 0:
+            self.selected_index = 0
+
+        for idx, canvas in enumerate(canvas_list):
+            widget = self.query_one(f"#canvas-{canvas.id}", CanvasWidget)
+            widget.selected = (idx == self.selected_index)
+
     def refresh_calendar(self) -> None:
         self.query_one("#calendar-header", Static).update(f"{MESES[self.cal_month]} {self.cal_year}")
         
@@ -5425,10 +6135,31 @@ class TodoApp(App):
             done_tasks = sum(1 for t, _ in tasks if t.done)
             done_subtasks = sum(1 for st, _, _ in subtasks if st.done)
             text = f"📅 {self.cal_day}/{self.cal_month}/{self.cal_year} | Tareas: {total_tasks} ({done_tasks} ✓) | Subtareas: {total_subtasks} ({done_subtasks} ✓)"
+        elif self.current_group_id == self.NOTES_GROUP_ID:
+            notes = self._get_filtered_notes()
+            total = len(notes)
+            with_links = sum(1 for n in notes if n.url)
+            with_images = sum(1 for n in notes if n.image_path)
+            with_files = sum(1 for n in notes if n.file_path)
+
+            text = f"Total: {total} notas | 🔗 {with_links} | 📷 {with_images} | 📎 {with_files} | Grupo: Notas"
+
+            if self.filter_tag_ids:
+                tag_names = []
+                for tag_id in self.filter_tag_ids:
+                    tag = next((t for t in self.tags if t.id == tag_id), None)
+                    if tag:
+                        tag_names.append(tag.name)
+                if tag_names:
+                    text += f" | Filtro: {', '.join(tag_names)}"
+        elif self.current_group_id == self.CANVAS_GROUP_ID:
+            canvas_list = self._get_filtered_canvas()
+            total = len(canvas_list)
+            text = f"Total: {total} pizarras | Grupo: Pizarra"
         else:
             c = self._get_current_tasks()
             total, done = len(c), sum(1 for t in c if t.done)
-            
+
             if self.current_group_id == self.GENERAL_GROUP_ID:
                 gname = "General"
             elif self.current_group_id is None:
@@ -5436,7 +6167,7 @@ class TodoApp(App):
             else:
                 g = next((x for x in self.groups if x.id == self.current_group_id), None)
                 gname = g.name if g else "Sin grupo"
-            
+
             text = f"Total: {total} | Completadas: {done} | Pendientes: {total - done} | Grupo: {gname}"
             
             sort_parts = []
@@ -5592,7 +6323,7 @@ class TodoApp(App):
             self.update_stats()
     
     async def _prev_group(self) -> None:
-        ids = [self.GENERAL_GROUP_ID, None] + [g.id for g in self.groups]
+        ids = [self.GENERAL_GROUP_ID, None, self.NOTES_GROUP_ID, self.CANVAS_GROUP_ID] + [g.id for g in self.groups]
         idx = (ids.index(self.current_group_id) - 1) % len(ids)
         self.current_group_id = ids[idx]
         self.selected_index = 0
@@ -5601,7 +6332,7 @@ class TodoApp(App):
         self.update_stats()
 
     async def _next_group(self) -> None:
-        ids = [self.GENERAL_GROUP_ID, None] + [g.id for g in self.groups]
+        ids = [self.GENERAL_GROUP_ID, None, self.NOTES_GROUP_ID, self.CANVAS_GROUP_ID] + [g.id for g in self.groups]
         idx = (ids.index(self.current_group_id) + 1) % len(ids)
         self.current_group_id = ids[idx]
         self.selected_index = 0
@@ -5622,13 +6353,17 @@ class TodoApp(App):
         if self.calendar_mode:
             tasks, subtasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
             date_str = f"{self.cal_day}/{self.cal_month}/{self.cal_year}"
-            
+
             def on_result(result):
                 if result:
                     item_type, item_obj = result
                     self._go_to_task(item_obj)
-            
+
             self.push_screen(DayItemsModal(tasks, subtasks, date_str), on_result)
+        elif self.current_group_id == self.NOTES_GROUP_ID:
+            self.action_view_note()
+        elif self.current_group_id == self.CANVAS_GROUP_ID:
+            self.action_edit_canvas()
         else:
             self.action_toggle_done()
     
@@ -5658,6 +6393,49 @@ class TodoApp(App):
         self.call_later(nav)
     
     def action_search(self) -> None:
+        if self.current_group_id == self.NOTES_GROUP_ID:
+            def on_input_notes(query: Optional[str]) -> None:
+                if not query: return
+                results = []
+                for note in self.notes:
+                    if (query.lower() in note.title.lower() or
+                        query.lower() in note.description.lower()):
+                        results.append(note)
+                if not results:
+                    self.notify(f"No se encontraron notas para '{query}'", severity="error", timeout=3)
+                else:
+                    self.filter_tag_ids = []
+                    filtered = self._get_filtered_notes()
+                    for idx, n in enumerate(filtered):
+                        if n.id == results[0].id:
+                            self.selected_index = idx
+                            break
+                    self.refresh_view()
+                    self.notify(f"Encontradas {len(results)} nota(s)", severity="information", timeout=2)
+            self.push_screen(InputModal("🔍 Buscar Notas", placeholder="Buscar en notas..."), on_input_notes)
+            return
+
+        if self.current_group_id == self.CANVAS_GROUP_ID:
+            def on_input_canvas(query: Optional[str]) -> None:
+                if not query: return
+                results = []
+                for canvas in self.canvas_list:
+                    if query.lower() in canvas.title.lower():
+                        results.append(canvas)
+                if not results:
+                    self.notify(f"No se encontraron pizarras para '{query}'", severity="error", timeout=3)
+                else:
+                    self.filter_tag_ids = []
+                    filtered = self._get_filtered_canvas()
+                    for idx, c in enumerate(filtered):
+                        if c.id == results[0].id:
+                            self.selected_index = idx
+                            break
+                    self.refresh_view()
+                    self.notify(f"Encontradas {len(results)} pizarra(s)", severity="information", timeout=2)
+            self.push_screen(InputModal("🔍 Buscar Pizarras", placeholder="Buscar en pizarras..."), on_input_canvas)
+            return
+
         def on_input(query: Optional[str]) -> None:
             if not query: return
             results = []
@@ -5719,7 +6497,22 @@ class TodoApp(App):
     
     def action_filter_tasks(self) -> None:
         if self.calendar_mode: return
-        
+
+        if self.current_group_id == self.CANVAS_GROUP_ID:
+            self.notify("Las pizarras no tienen filtros", severity="information", timeout=2)
+            return
+
+        if self.current_group_id == self.NOTES_GROUP_ID:
+            async def on_result(result: Optional[list[int]]) -> None:
+                if result is not None:
+                    self.filter_tag_ids = result
+                    self.selected_index = 0
+                    await self.refresh_view()
+                    self.update_stats()
+
+            self.push_screen(TagPickerModal(all_tags=self.tags, selected_tag_ids=self.filter_tag_ids), on_result)
+            return
+
         if self.current_group_id == self.GENERAL_GROUP_ID:
             group_tasks = list(self.tasks)
         elif self.current_group_id is None:
@@ -5870,7 +6663,15 @@ class TodoApp(App):
         if self.calendar_mode:
             self.action_assign_tasks_from_calendar()
             return
-        
+
+        if self.current_group_id == self.NOTES_GROUP_ID:
+            self.action_add_note()
+            return
+
+        if self.current_group_id == self.CANVAS_GROUP_ID:
+            self.action_add_canvas()
+            return
+
         if self.current_group_id == self.GENERAL_GROUP_ID:
             self.notify("No se pueden crear tareas en General. Cambia a un grupo específico.", severity="error", timeout=3)
             return
@@ -5891,6 +6692,15 @@ class TodoApp(App):
     
     def action_edit_task(self) -> None:
         if self.calendar_mode: return
+
+        if self.current_group_id == self.NOTES_GROUP_ID:
+            self.action_edit_note()
+            return
+
+        if self.current_group_id == self.CANVAS_GROUP_ID:
+            self.action_edit_canvas()
+            return
+
         w = self.get_selected_widget()
         if not w: return
         t = w.task_data
@@ -5934,6 +6744,15 @@ class TodoApp(App):
         
     def action_delete_task(self) -> None:
         if self.calendar_mode: return
+
+        if self.current_group_id == self.NOTES_GROUP_ID:
+            self.action_delete_note()
+            return
+
+        if self.current_group_id == self.CANVAS_GROUP_ID:
+            self.action_delete_canvas()
+            return
+
         ordered = self._get_ordered_tasks()
         if not ordered: return
         t = ordered[self.selected_index]
@@ -5950,17 +6769,219 @@ class TodoApp(App):
                 self.notify("🗑️ Tarea eliminada (Ctrl+Z para deshacer)", severity="information", timeout=2)
         txt = t.text[:30] + "..." if len(t.text) > 30 else t.text
         self.push_screen(ConfirmModal(f"¿Eliminar '{txt}'?"), on_confirm)
-        
+
+    def action_add_note(self) -> None:
+        async def on_result(result: Optional[dict]) -> None:
+            if result:
+                self._save_undo_state()
+                note = Note(
+                    id=self.next_note_id,
+                    title=result["title"],
+                    description=result.get("description", ""),
+                    url=result.get("url"),
+                    image_path=result.get("image_path"),
+                    file_path=result.get("file_path"),
+                    tags=result.get("tags", [])
+                )
+                self.next_note_id += 1
+                self.notes.append(note)
+                self.selected_index = 0
+                await self.refresh_view()
+                self.update_stats()
+                self.save_data()
+                self.notify("✅ Nota creada (Ctrl+Z para deshacer)", severity="information", timeout=2)
+
+        self.push_screen(NoteEditModal(
+            modal_title="📝 Nueva Nota",
+            all_tags=self.tags
+        ), on_result)
+
+    def action_edit_note(self) -> None:
+        notes = self._get_filtered_notes()
+        if not notes: return
+        note = notes[self.selected_index]
+
+        async def on_result(result: Optional[dict]) -> None:
+            if result:
+                self._save_undo_state()
+                note.title = result["title"]
+                note.description = result.get("description", "")
+                note.url = result.get("url")
+                note.image_path = result.get("image_path")
+                note.file_path = result.get("file_path")
+                note.tags = result.get("tags", [])
+                await self.refresh_view()
+                self.update_stats()
+                self.save_data()
+                self.notify("✅ Nota actualizada (Ctrl+Z para deshacer)", severity="information", timeout=2)
+
+        self.push_screen(NoteEditModal(
+            modal_title="📝 Editar Nota",
+            initial_title=note.title,
+            initial_description=note.description,
+            initial_url=note.url or "",
+            initial_image=note.image_path or "",
+            initial_file=note.file_path or "",
+            all_tags=self.tags,
+            selected_tag_ids=note.tags
+        ), on_result)
+
+    def action_delete_note(self) -> None:
+        notes = self._get_filtered_notes()
+        if not notes: return
+        note = notes[self.selected_index]
+
+        async def on_confirm(yes: bool) -> None:
+            if yes:
+                self._save_undo_state()
+                self.notes.remove(note)
+                if self.selected_index >= len(self._get_filtered_notes()) and self.selected_index > 0:
+                    self.selected_index -= 1
+                await self.refresh_view()
+                self.update_stats()
+                self.save_data()
+                self.notify("🗑️ Nota eliminada (Ctrl+Z para deshacer)", severity="information", timeout=2)
+
+        txt = note.title[:30] + "..." if len(note.title) > 30 else note.title
+        self.push_screen(ConfirmModal(f"¿Eliminar '{txt}'?"), on_confirm)
+
+    def action_view_note(self) -> None:
+        notes = self._get_filtered_notes()
+        if not notes: return
+        note = notes[self.selected_index]
+
+        content_lines = []
+        content_lines.append(f"[bold]{note.title}[/bold]")
+        content_lines.append("")
+
+        if note.description:
+            content_lines.append(note.description)
+            content_lines.append("")
+
+        if note.url:
+            content_lines.append(f"🔗 Enlace: {note.url}")
+
+        if note.image_path:
+            content_lines.append(f"📷 Imagen: {note.image_path}")
+
+        if note.file_path:
+            content_lines.append(f"📎 Archivo: {note.file_path}")
+
+        if note.tags:
+            tag_names = []
+            for tag_id in note.tags:
+                tag = next((t for t in self.tags if t.id == tag_id), None)
+                if tag:
+                    tag_names.append(tag.name)
+            if tag_names:
+                content_lines.append("")
+                content_lines.append(f"🏷️ Etiquetas: {', '.join(tag_names)}")
+
+        content_lines.append("")
+        content_lines.append(f"📅 Creada: {note.created_at}")
+
+        content = "\n".join(content_lines)
+        self.push_screen(InputModal(
+            "📝 Ver Nota",
+            placeholder=content
+        ), lambda x: None)
+
+        if note.url:
+            try:
+                import webbrowser
+                webbrowser.open(note.url)
+            except:
+                pass
+
+    def action_add_canvas(self) -> None:
+        async def on_result(result: Optional[dict]) -> None:
+            if result:
+                self._save_undo_state()
+                canvas = Canvas(
+                    id=self.next_canvas_id,
+                    title=result["title"],
+                    width=result["width"],
+                    height=result["height"],
+                    grid=result["grid"]
+                )
+                self.next_canvas_id += 1
+                self.canvas_list.append(canvas)
+                self.selected_index = 0
+                await self.refresh_view()
+                self.update_stats()
+                self.save_data()
+                self.notify("✅ Pizarra creada (Ctrl+Z para deshacer)", severity="information", timeout=2)
+
+        self.push_screen(CanvasEditorModal(), on_result)
+
+    def action_edit_canvas(self) -> None:
+        canvas_list = self._get_filtered_canvas()
+        if not canvas_list: return
+        canvas = canvas_list[self.selected_index]
+
+        async def on_result(result: Optional[dict]) -> None:
+            if result:
+                self._save_undo_state()
+                canvas.title = result["title"]
+                canvas.width = result["width"]
+                canvas.height = result["height"]
+                canvas.grid = result["grid"]
+                await self.refresh_view()
+                self.update_stats()
+                self.save_data()
+                self.notify("✅ Pizarra actualizada (Ctrl+Z para deshacer)", severity="information", timeout=2)
+
+        self.push_screen(CanvasEditorModal(canvas_data=canvas), on_result)
+
+    def action_delete_canvas(self) -> None:
+        canvas_list = self._get_filtered_canvas()
+        if not canvas_list: return
+        canvas = canvas_list[self.selected_index]
+
+        async def on_confirm(yes: bool) -> None:
+            if yes:
+                self._save_undo_state()
+                self.canvas_list.remove(canvas)
+                if self.selected_index >= len(self._get_filtered_canvas()) and self.selected_index > 0:
+                    self.selected_index -= 1
+                await self.refresh_view()
+                self.update_stats()
+                self.save_data()
+                self.notify("🗑️ Pizarra eliminada (Ctrl+Z para deshacer)", severity="information", timeout=2)
+
+        txt = canvas.title[:30] + "..." if len(canvas.title) > 30 else canvas.title
+        self.push_screen(ConfirmModal(f"¿Eliminar '{txt}'?"), on_confirm)
+
     def _capture_state(self) -> dict:
         return {
             "next_task_id": self.next_task_id,
             "next_group_id": self.next_group_id,
             "next_tag_id": self.next_tag_id,
             "next_subtask_id": self.next_subtask_id,
+            "next_note_id": self.next_note_id,
+            "next_canvas_id": self.next_canvas_id,
             "current_group_id": self.current_group_id,
             "selected_index": self.selected_index,
             "groups": [{"id": g.id, "name": g.name} for g in self.groups],
             "tags": [{"id": t.id, "name": t.name} for t in self.tags],
+            "notes": [{
+                "id": n.id,
+                "title": n.title,
+                "description": n.description,
+                "url": n.url,
+                "image_path": n.image_path,
+                "file_path": n.file_path,
+                "created_at": n.created_at,
+                "tags": list(n.tags)
+            } for n in self.notes],
+            "canvas": [{
+                "id": c.id,
+                "title": c.title,
+                "width": c.width,
+                "height": c.height,
+                "grid": c.grid,
+                "created_at": c.created_at
+            } for c in self.canvas_list],
             "tasks": [{
                 "id": t.id,
                 "text": t.text,
@@ -6014,13 +7035,34 @@ class TodoApp(App):
         self.next_group_id = state["next_group_id"]
         self.next_tag_id = state["next_tag_id"]
         self.next_subtask_id = state.get("next_subtask_id", 1)
+        self.next_note_id = state.get("next_note_id", 1)
         self.current_group_id = state["current_group_id"]
         self.selected_index = state["selected_index"]
-        
+
         self.groups = [Group(id=g["id"], name=g["name"]) for g in state["groups"]]
-        
+
         self.tags = [Tag(id=t["id"], name=t["name"]) for t in state["tags"]]
-        
+
+        self.notes = [Note(
+            id=n["id"],
+            title=n.get("title", ""),
+            description=n.get("description", ""),
+            url=n.get("url"),
+            image_path=n.get("image_path"),
+            file_path=n.get("file_path"),
+            created_at=n.get("created_at", ""),
+            tags=n.get("tags", [])
+        ) for n in state.get("notes", [])]
+
+        self.canvas_list = [Canvas(
+            id=c["id"],
+            title=c.get("title", ""),
+            width=c.get("width", 50),
+            height=c.get("height", 20),
+            grid=c.get("grid", [[" " for _ in range(c.get("width", 50))] for _ in range(c.get("height", 20))]),
+            created_at=c.get("created_at", "")
+        ) for c in state.get("canvas", [])]
+
         self.tasks = []
         for t in state["tasks"]:
             comments = [Comment(
@@ -6112,7 +7154,7 @@ class TodoApp(App):
         self.update_stats()
 
         self.notify(f"↪️ Rehecho (Ctrl+Z para deshacer | {len(self.redo_stack)} rehacer restantes)", severity="information", timeout=2)
-    
+
     def save_data(self) -> None:
         with self.save_lock:
             data = {
@@ -6120,8 +7162,28 @@ class TodoApp(App):
                 "next_group_id": self.next_group_id,
                 "next_tag_id": self.next_tag_id,
                 "next_subtask_id": self.next_subtask_id,
+                "next_note_id": self.next_note_id,
+                "next_canvas_id": self.next_canvas_id,
                 "groups": [{"id": g.id, "name": g.name} for g in self.groups],
                 "tags": [{"id": t.id, "name": t.name} for t in self.tags],
+                "notes": [{
+                    "id": n.id,
+                    "title": n.title,
+                    "description": n.description,
+                    "url": n.url,
+                    "image_path": n.image_path,
+                    "file_path": n.file_path,
+                    "created_at": n.created_at,
+                    "tags": n.tags
+                } for n in self.notes],
+                "canvas": [{
+                    "id": c.id,
+                    "title": c.title,
+                    "width": c.width,
+                    "height": c.height,
+                    "grid": c.grid,
+                    "created_at": c.created_at
+                } for c in self.canvas_list],
                 "tasks": [{
                     "id": t.id, 
                     "text": t.text, 
@@ -6155,8 +7217,8 @@ class TodoApp(App):
                     } for s in t.subtasks]
                 } for t in self.tasks]
             }
-        try: 
-            self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+        try:
+            self.data_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception as e:
             print(f"Error guardando datos: {e}")
             self.notify(f"❌ Error al guardar: {e}", severity="error", timeout=3)
@@ -6164,13 +7226,33 @@ class TodoApp(App):
     def load_data(self) -> None:
         try:
             if self.data_file.exists():
-                data = json.loads(self.data_file.read_text())
+                data = json.loads(self.data_file.read_text(encoding='utf-8'))
                 self.next_task_id = data.get("next_task_id", 1)
                 self.next_group_id = data.get("next_group_id", 1)
                 self.next_tag_id = data.get("next_tag_id", 1)
                 self.next_subtask_id = data.get("next_subtask_id", 1)
+                self.next_note_id = data.get("next_note_id", 1)
+                self.next_canvas_id = data.get("next_canvas_id", 1)
                 self.groups = [Group(id=g["id"], name=g["name"]) for g in data.get("groups", [])]
                 self.tags = [Tag(id=t["id"], name=t["name"]) for t in data.get("tags", [])]
+                self.notes = [Note(
+                    id=n["id"],
+                    title=n.get("title", ""),
+                    description=n.get("description", ""),
+                    url=n.get("url"),
+                    image_path=n.get("image_path"),
+                    file_path=n.get("file_path"),
+                    created_at=n.get("created_at", ""),
+                    tags=n.get("tags", [])
+                ) for n in data.get("notes", [])]
+                self.canvas_list = [Canvas(
+                    id=c["id"],
+                    title=c.get("title", ""),
+                    width=c.get("width", 50),
+                    height=c.get("height", 20),
+                    grid=c.get("grid", [[" " for _ in range(c.get("width", 50))] for _ in range(c.get("height", 20))]),
+                    created_at=c.get("created_at", "")
+                ) for c in data.get("canvas", [])]
                 self.tasks = []
                 for t in data.get("tasks", []):
                     comments = [Comment(id=c["id"], title=c.get("title", c.get("text", "")),
@@ -6217,8 +7299,8 @@ class TodoApp(App):
                     )
                     self.tasks.append(task)
         except Exception as e:
-            self.tasks, self.groups, self.tags = [], [], []
-            self.next_task_id = self.next_group_id = self.next_tag_id = self.next_subtask_id = 1
+            self.tasks, self.groups, self.tags, self.notes, self.canvas_list = [], [], [], [], []
+            self.next_task_id = self.next_group_id = self.next_tag_id = self.next_subtask_id = self.next_note_id = self.next_canvas_id = 1
     
     def check_konami_code(self, key: str) -> None:
         self.konami_sequence.append(key)
