@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """
-TODO App - Aplicación de tareas para terminal con grupos, calendario, etiquetas y filtros
+MyTaskit v1.1 – Gestor de tareas para terminal
+Fecha: 2026-01-22
+
+Aplicación de tareas con grupos, calendario, etiquetas, filtros y
+sistema completo de deshacer/rehacer (hasta 50 niveles).
+
+Uso:
+    python MyTaskit.py
+    ./MyTaskit.py   (si le das permiso de ejecución)
+
 Controles principales:
   a - Añadir tarea (no disponible en grupo General)
   e - Editar tarea (texto, fecha, grupo, comentarios, etiquetas)
@@ -93,10 +102,8 @@ from pathlib import Path
 from datetime import datetime, date, timedelta
 import calendar
 import webbrowser
-import pyperclip 
-from PIL import Image 
-import tkinter as tk
-from tkinter import filedialog
+import pyperclip
+from PIL import Image
 import shutil
 from rich_pixels import Pixels
 from rich.console import Console
@@ -107,6 +114,152 @@ from pathlib import Path
 from PIL import Image
 import os
 from rich_pixels import Pixels
+from textual.widgets import Button, Footer, Header, Input, Label, Static, TextArea
+
+class UndoableInput(Input):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._history = [self.value]
+        self._history_index = 0
+        self._last_saved_value = self.value
+        self._char_count = 0
+
+    def _is_word_boundary(self, old_val: str, new_val: str) -> bool:
+        if not old_val or not new_val:
+            return False
+
+        if len(new_val) > len(old_val):
+            last_char = new_val[-1]
+            return last_char in ' .,;:!?-\n\t'
+
+        if len(old_val) - len(new_val) > 1:
+            return True
+
+        return False
+
+    def _save_state(self):
+        if self._last_saved_value == self.value:
+            return
+
+        is_boundary = self._is_word_boundary(self._last_saved_value, self.value)
+        self._char_count += abs(len(self.value) - len(self._last_saved_value))
+
+        if is_boundary or self._char_count >= 20:
+            self._history = self._history[:self._history_index + 1]
+            self._history.append(self.value)
+            self._history_index += 1
+            self._last_saved_value = self.value
+            self._char_count = 0
+            if len(self._history) > 50:
+                self._history.pop(0)
+                self._history_index -= 1
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._save_state()
+
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+z":
+            event.prevent_default()
+            event.stop()
+            if self.value != self._history[self._history_index]:
+                self._history = self._history[:self._history_index + 1]
+                self._history.append(self.value)
+                self._history_index += 1
+            if self._history_index > 0:
+                self._history_index -= 1
+                self.value = self._history[self._history_index]
+                self._last_saved_value = self.value
+                self._char_count = 0
+                self.cursor_position = len(self.value)
+        elif event.key == "ctrl+y":
+            event.prevent_default()
+            event.stop()
+            if self._history_index < len(self._history) - 1:
+                self._history_index += 1
+                self.value = self._history[self._history_index]
+                self._last_saved_value = self.value
+                self._char_count = 0
+                self.cursor_position = len(self.value)
+        elif event.key == "ctrl+a":
+            event.prevent_default()
+            event.stop()
+            self.cursor_position = 0
+            self.selection = (0, len(self.value))
+
+class UndoableTextArea(TextArea):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._history = [self.text]
+        self._history_index = 0
+        self._last_saved_value = self.text
+        self._char_count = 0
+
+    def _is_word_boundary(self, old_val: str, new_val: str) -> bool:
+        if not old_val or not new_val:
+            return False
+
+        if len(new_val) > len(old_val):
+            last_char = new_val[-1]
+            return last_char in ' .,;:!?-\n\t'
+
+        if len(old_val) - len(new_val) > 1:
+            return True
+
+        return False
+
+    def _save_state(self):
+        if self._last_saved_value == self.text:
+            return
+
+        is_boundary = self._is_word_boundary(self._last_saved_value, self.text)
+        self._char_count += abs(len(self.text) - len(self._last_saved_value))
+
+        if is_boundary or self._char_count >= 30:
+            self._history = self._history[:self._history_index + 1]
+            self._history.append(self.text)
+            self._history_index += 1
+            self._last_saved_value = self.text
+            self._char_count = 0
+            if len(self._history) > 50:
+                self._history.pop(0)
+                self._history_index -= 1
+
+    def on_text_area_changed(self) -> None:
+        self._save_state()
+
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+z":
+            event.prevent_default()
+            event.stop()
+            if self.text != self._history[self._history_index]:
+                self._history = self._history[:self._history_index + 1]
+                self._history.append(self.text)
+                self._history_index += 1
+            if self._history_index > 0:
+                self._history_index -= 1
+                self.text = self._history[self._history_index]
+                self._last_saved_value = self.text
+                self._char_count = 0
+                try:
+                    self.move_cursor_relative(rows=1000, columns=1000)
+                except:
+                    pass
+        elif event.key == "ctrl+y":
+            event.prevent_default()
+            event.stop()
+            if self._history_index < len(self._history) - 1:
+                self._history_index += 1
+                self.text = self._history[self._history_index]
+                self._last_saved_value = self.text
+                self._char_count = 0
+                try:
+                    self.move_cursor_relative(rows=1000, columns=1000)
+                except:
+                    pass
+        elif event.key == "ctrl+a":
+            event.prevent_default()
+            event.stop()
+            self.select_all()
 
 MESES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 DIAS_SEMANA = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
@@ -114,11 +267,13 @@ DIAS_SEMANA = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
 @dataclass
 class Comment:
     id: int
-    text: str
+    title: str
+    description: str = ""
     url: Optional[str] = None
     image_path: Optional[str] = None
+    file_path: Optional[str] = None
     created_at: str = ""
-    
+
     def __post_init__(self):
         if not self.created_at:
             self.created_at = datetime.now().strftime("%d/%m %H:%M")
@@ -131,12 +286,16 @@ class Subtask:
     created_at: str = ""
     due_date: Optional[str] = None
     comments: list = None
-    
+    tags: list = None
+    priority: int = 0
+
     def __post_init__(self):
         if not self.created_at:
             self.created_at = datetime.now().strftime("%d/%m %H:%M")
         if self.comments is None:
             self.comments = []
+        if self.tags is None:
+            self.tags = []
 
 @dataclass
 class Tag:
@@ -178,10 +337,12 @@ class SubtasksModal(ModalScreen[list]):
     DEFAULT_CSS = """
     SubtasksModal { align: center middle; }
     SubtasksModal > Container {
-        width: 80; height: 30; border: thick $primary;
+        width: 90; height: 38; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     SubtasksModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
+    SubtasksModal #search-input { width: 100%; margin-bottom: 1; }
+    SubtasksModal #filter-status { width: 100%; height: 1; text-align: center; color: $accent; margin-bottom: 1; }
     SubtasksModal #subtasks-list { width: 100%; height: 16; overflow-y: auto; border: solid $primary-background; padding: 1; }
     SubtasksModal .subtask-item {
         width: 100%; height: 3; padding: 0 1;
@@ -192,12 +353,25 @@ class SubtasksModal(ModalScreen[list]):
     SubtasksModal .subtask-item.selected { border: solid $accent; background: $surface-lighten-1; }
     SubtasksModal .subtask-item.done .subtask-text { text-style: strike; color: $text-muted; }
     SubtasksModal .subtask-checkbox { width: 4; height: 1; }
+    SubtasksModal .subtask-priority { width: 3; height: 1; }
+    SubtasksModal .urgent-indicator { width: 3; height: 1; color: $warning; text-style: bold; }
     SubtasksModal .subtask-text { width: 1fr; height: 1; }
+    SubtasksModal .tag { background: #90EE90; color: #000000; }
+    SubtasksModal .tag-separator { width: 1; }
+    SubtasksModal .subtask-links { width: 4; height: 1; text-align: right; color: $accent; }
+    SubtasksModal .subtask-images { width: 4; height: 1; text-align: right; color: $primary; }
+    SubtasksModal .subtask-files { width: 4; height: 1; text-align: right; color: $warning; }
     SubtasksModal .subtask-comments { width: 5; height: 1; text-align: right; color: $primary; }
-    SubtasksModal .subtask-date { width: 10; height: 1; text-align: right; color: $warning; }
+    SubtasksModal .subtask-date { width: 8; height: 1; text-align: right; color: $warning; }
+    SubtasksModal .subtask-item.done .subtask-priority { color: $text-muted; }
+    SubtasksModal .subtask-item.done .subtask-comments { color: $text-muted; }
+    SubtasksModal .subtask-item.done .subtask-links { color: $text-muted; }
+    SubtasksModal .subtask-item.done .subtask-images { color: $text-muted; }
+    SubtasksModal .subtask-item.done .subtask-files { color: $text-muted; }
+    SubtasksModal .subtask-item.done .subtask-date { color: $text-muted; }
     SubtasksModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
     SubtasksModal .hint { width: 100%; height: auto; text-align: center; color: $text-muted; margin: 1 0; padding: 0 2; }
-    SubtasksModal .button-row { width: 100%; height: 3; align: center middle; }
+    SubtasksModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
     SubtasksModal Button { margin: 0 1; }
     """
     BINDINGS = [
@@ -210,26 +384,42 @@ class SubtasksModal(ModalScreen[list]):
         Binding("e", "edit_subtask", show=False),
         Binding("d", "delete_subtask", show=False),
         Binding("space", "toggle_subtask", show=False),
-        Binding("D", "set_date", show=False),
+        Binding("f", "filter_subtasks", show=False),
+        Binding("f5", "reset_filters", show=False),
+        Binding("ctrl+f", "focus_search", show=False),
+        Binding("/", "focus_search", show=False),
+        Binding("tab", "blur_search", show=False),
     ]
-    
-    def __init__(self, subtasks: list, next_subtask_id: int, next_comment_id: int, **kwargs) -> None:
+
+    def __init__(self, subtasks: list, next_subtask_id: int, next_comment_id: int,
+                 all_tags: list = None, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.subtasks = [Subtask(id=s.id, text=s.text, done=s.done, 
+        self.subtasks = [Subtask(id=s.id, text=s.text, done=s.done,
                                 created_at=s.created_at, due_date=s.due_date,
-                                comments=s.comments if hasattr(s, 'comments') else []) 
+                                comments=s.comments if hasattr(s, 'comments') else [],
+                                tags=s.tags if hasattr(s, 'tags') else [],
+                                priority=s.priority if hasattr(s, 'priority') else 0)
                         for s in subtasks]
         self.next_subtask_id = next_subtask_id
         self.next_comment_id = next_comment_id
+        self.all_tags = all_tags or []
         self.selected_index = 0 if subtasks else -1
+        self.search_query = ""
+        self.search_focused = False
+        self.filter_dates: list[str] = []
+        self.filter_tag_ids: list[int] = []
+        self.filter_statuses: list[str] = []
+        self.filter_priorities: list[int] = []
     
     def compose(self) -> ComposeResult:
         with Container():
             yield Label("📋 Subtareas", classes="modal-title")
+            yield UndoableInput(placeholder="🔍 Buscar subtareas (/) ...", id="search-input")
+            yield Label("", id="filter-status")
             yield Container(id="subtasks-list")
             yield Label(
-                "↑↓/k/j: Navegar | a: Añadir | e: Editar | d: Eliminar\n"
-                "Espacio: Completar | D: Fecha | Esc: Cerrar",
+                "↑↓/k/j: Navegar | a: Añadir | e: Editar | d: Eliminar | /: Buscar | Tab: Salir búsqueda\n"
+                "f: Filtrar | F5: Reset filtros | Espacio: Completar | Esc: Cerrar",
                 classes="hint"
             )
             with Horizontal(classes="button-row"):
@@ -240,40 +430,149 @@ class SubtasksModal(ModalScreen[list]):
     async def on_mount(self) -> None:
         await self.refresh_subtasks_list()
     
+    def _filter_subtasks(self) -> list[Subtask]:
+        filtered = self.subtasks
+
+        if self.search_query:
+            query_lower = self.search_query.lower()
+            filtered = [s for s in filtered if query_lower in s.text.lower()]
+
+        if self.filter_statuses:
+            if "done" in self.filter_statuses and "pending" not in self.filter_statuses:
+                filtered = [s for s in filtered if s.done]
+            elif "pending" in self.filter_statuses and "done" not in self.filter_statuses:
+                filtered = [s for s in filtered if not s.done]
+
+        if self.filter_tag_ids:
+            filtered = [s for s in filtered if s.tags and any(tag_id in s.tags for tag_id in self.filter_tag_ids)]
+
+        if self.filter_priorities:
+            filtered = [s for s in filtered if s.priority in self.filter_priorities]
+
+        if self.filter_dates:
+            filtered = [s for s in filtered if s.due_date in self.filter_dates]
+
+        return filtered
+
+    def _update_filter_status(self) -> None:
+        filter_parts = []
+
+        if self.search_query:
+            filter_parts.append(f"🔍 '{self.search_query}'")
+
+        if self.filter_statuses:
+            if "done" in self.filter_statuses and "pending" not in self.filter_statuses:
+                filter_parts.append("✅ Completadas")
+            elif "pending" in self.filter_statuses and "done" not in self.filter_statuses:
+                filter_parts.append("⏳ Pendientes")
+
+        if self.filter_tag_ids:
+            tag_names = []
+            for tag_id in self.filter_tag_ids:
+                tag = next((t for t in self.all_tags if t.id == tag_id), None)
+                if tag:
+                    tag_names.append(tag.name)
+            if tag_names:
+                filter_parts.append(f"🏷️ {', '.join(tag_names)}")
+
+        if self.filter_priorities:
+            priority_icons = {0: "Sin prioridad", 1: "🟢 Baja", 2: "🟡 Media", 3: "🔴 Alta"}
+            priorities_str = ", ".join([priority_icons.get(p, "") for p in self.filter_priorities])
+            filter_parts.append(f"⚡ {priorities_str}")
+
+        if self.filter_dates:
+            dates_str = ", ".join([d.split('-')[2] + "/" + d.split('-')[1] for d in self.filter_dates])
+            filter_parts.append(f"📅 {dates_str}")
+
+        filter_status_label = self.query_one("#filter-status", Label)
+        if filter_parts:
+            filter_status_label.update(f"Filtros activos: {' | '.join(filter_parts)}")
+        else:
+            filter_status_label.update("")
+
     async def refresh_subtasks_list(self) -> None:
         subtasks_list = self.query_one("#subtasks-list", Container)
         await subtasks_list.remove_children()
-        
+
+        self._update_filter_status()
+
+        filtered_subtasks = self._filter_subtasks()
+
         if not self.subtasks:
             await subtasks_list.mount(Label("No hay subtareas. Pulsa 'a' para añadir una.", classes="empty-msg"))
             self.selected_index = -1
+        elif not filtered_subtasks:
+            await subtasks_list.mount(Label("No hay subtareas que coincidan con los filtros", classes="empty-msg"))
+            self.selected_index = -1
         else:
-            for i, subtask in enumerate(self.subtasks):
+            if self.selected_index >= len(filtered_subtasks):
+                self.selected_index = max(0, len(filtered_subtasks) - 1)
+
+            for i, subtask in enumerate(filtered_subtasks):
                 item = Horizontal(id=f"subtask-{i}", classes="subtask-item")
                 await subtasks_list.mount(item)
-                
+
                 checkbox = "☑" if subtask.done else "☐"
                 await item.mount(Label(checkbox, classes="subtask-checkbox"))
-                
+
+                priority_icons = {
+                    0: "  ",
+                    1: "[green]■[/green]",
+                    2: "[yellow]■[/yellow]",
+                    3: "[red]■[/red]"
+                }
+                priority_icon = priority_icons.get(subtask.priority, "  ")
+                await item.mount(Label(priority_icon, classes="subtask-priority"))
+
+                urgent_icon = ""
+                if not subtask.done and subtask.due_date:
+                    try:
+                        due_date_obj = datetime.strptime(subtask.due_date, "%Y-%m-%d").date()
+                        if due_date_obj == date.today():
+                            urgent_icon = "⚠️ "
+                    except: pass
+                await item.mount(Label(urgent_icon, classes="urgent-indicator"))
+
                 await item.mount(Label(subtask.text, classes="subtask-text"))
-                
-                comments_str = f"💬{len(subtask.comments)}" if subtask.comments else ""
+
+                if subtask.tags:
+                    for tag_id in subtask.tags:
+                        tag = next((t for t in self.all_tags if t.id == tag_id), None)
+                        if tag:
+                            tag_name = tag.name[:10] if len(tag.name) > 10 else tag.name
+                            await item.mount(Label(f" {tag_name} ", classes="tag"))
+                            await item.mount(Label(" ", classes="tag-separator"))
+
+                links_count = sum(1 for c in subtask.comments if c.url)
+                links_str = f"🔗 {links_count}" if links_count > 0 else ""
+                await item.mount(Label(links_str, classes="subtask-links"))
+
+                images_count = sum(1 for c in subtask.comments if c.image_path)
+                images_str = f"📷 {images_count}" if images_count > 0 else ""
+                await item.mount(Label(images_str, classes="subtask-images"))
+
+                files_count = sum(1 for c in subtask.comments if c.file_path)
+                files_str = f"📎 {files_count}" if files_count > 0 else ""
+                await item.mount(Label(files_str, classes="subtask-files"))
+
+                comments_count = len(subtask.comments)
+                comments_str = f"💬 {comments_count}" if comments_count > 0 else ""
                 await item.mount(Label(comments_str, classes="subtask-comments"))
-                
+
                 date_str = ""
                 if subtask.due_date:
                     try:
                         d = datetime.strptime(subtask.due_date, "%Y-%m-%d")
-                        date_str = f"📅 {d.day:02d}/{d.month:02d}"
+                        date_str = f"{d.day:02d}/{d.month:02d}"
                     except: pass
                 await item.mount(Label(date_str, classes="subtask-date"))
-                
+
                 if subtask.done:
                     item.add_class("done")
-                
+
                 if i == self.selected_index:
                     item.add_class("selected")
-            
+
             self.scroll_to_selected()
     
     def scroll_to_selected(self) -> None:
@@ -284,24 +583,33 @@ class SubtasksModal(ModalScreen[list]):
             except: pass
     
     def update_selection(self) -> None:
-        for i in range(len(self.subtasks)):
+        filtered_subtasks = self._filter_subtasks()
+        for i in range(len(filtered_subtasks)):
             try:
                 item = self.query_one(f"#subtask-{i}", Horizontal)
                 item.set_class(i == self.selected_index, "selected")
             except: pass
         self.scroll_to_selected()
-    
+
     def action_move_up(self) -> None:
-        if self.subtasks and self.selected_index > 0:
+        if self.search_focused:
+            return
+        filtered_subtasks = self._filter_subtasks()
+        if filtered_subtasks and self.selected_index > 0:
             self.selected_index -= 1
             self.update_selection()
-    
+
     def action_move_down(self) -> None:
-        if self.subtasks and self.selected_index < len(self.subtasks) - 1:
+        if self.search_focused:
+            return
+        filtered_subtasks = self._filter_subtasks()
+        if filtered_subtasks and self.selected_index < len(filtered_subtasks) - 1:
             self.selected_index += 1
             self.update_selection()
     
     def action_add_subtask(self) -> None:
+        if self.search_focused:
+            return
         def on_result(text: Optional[str]) -> None:
             if text:
                 subtask = Subtask(id=self.next_subtask_id, text=text)
@@ -312,58 +620,123 @@ class SubtasksModal(ModalScreen[list]):
         self.app.push_screen(InputModal("📋 Nueva Subtarea", placeholder="Descripción..."), on_result)
     
     def action_edit_subtask(self) -> None:
-        if not self.subtasks or self.selected_index < 0:
+        if self.search_focused:
             return
-        subtask = self.subtasks[self.selected_index]
-        
+        filtered_subtasks = self._filter_subtasks()
+        if not filtered_subtasks or self.selected_index < 0 or self.selected_index >= len(filtered_subtasks):
+            return
+        subtask = filtered_subtasks[self.selected_index]
+
         next_comment_id = self.next_comment_id
         if subtask.comments:
             next_comment_id = max(c.id for c in subtask.comments) + 1
-        
+
         def on_result(result: Optional[dict]) -> None:
             if result:
                 subtask.text = result["text"]
                 subtask.comments = result.get("comments", [])
+                subtask.tags = result.get("tags", [])
+                subtask.priority = result.get("priority", 0)
+                subtask.due_date = result.get("due_date", "")
                 if subtask.comments:
                     self.next_comment_id = max(c.id for c in subtask.comments) + 1
                 self.call_later(self.refresh_subtasks_list)
-        
+
         self.app.push_screen(
-            EditSubtaskModal(subtask.text, subtask.comments, next_comment_id),
+            EditSubtaskModal(subtask.text, subtask.comments, next_comment_id,
+                           all_tags=self.all_tags, selected_tags=subtask.tags,
+                           priority=subtask.priority, due_date=subtask.due_date),
             on_result
         )
     
     def action_delete_subtask(self) -> None:
-        if not self.subtasks or self.selected_index < 0:
+        if self.search_focused:
             return
-        subtask = self.subtasks[self.selected_index]
+        filtered_subtasks = self._filter_subtasks()
+        if not filtered_subtasks or self.selected_index < 0 or self.selected_index >= len(filtered_subtasks):
+            return
+        subtask = filtered_subtasks[self.selected_index]
         txt = subtask.text[:30] + "..." if len(subtask.text) > 30 else subtask.text
         def on_confirm(yes: bool) -> None:
             if yes:
-                self.subtasks.pop(self.selected_index)
-                if self.selected_index >= len(self.subtasks) and self.selected_index > 0:
+                self.subtasks.remove(subtask)
+                filtered_subtasks = self._filter_subtasks()
+                if self.selected_index >= len(filtered_subtasks) and self.selected_index > 0:
                     self.selected_index -= 1
                 if not self.subtasks:
                     self.selected_index = -1
                 self.call_later(self.refresh_subtasks_list)
         self.app.push_screen(ConfirmModal(f"¿Eliminar subtarea '{txt}'?"), on_confirm)
-    
+
     def action_toggle_subtask(self) -> None:
-        if not self.subtasks or self.selected_index < 0:
+        if self.search_focused:
             return
-        subtask = self.subtasks[self.selected_index]
+        filtered_subtasks = self._filter_subtasks()
+        if not filtered_subtasks or self.selected_index < 0 or self.selected_index >= len(filtered_subtasks):
+            return
+        subtask = filtered_subtasks[self.selected_index]
         subtask.done = not subtask.done
         self.call_later(self.refresh_subtasks_list)
-    
-    def action_set_date(self) -> None:
-        if not self.subtasks or self.selected_index < 0:
+
+    def action_filter_subtasks(self) -> None:
+        if self.search_focused:
             return
-        subtask = self.subtasks[self.selected_index]
-        def on_result(date_str: Optional[str]) -> None:
-            if date_str is not None:
-                subtask.due_date = date_str if date_str else None
+        def on_result(filters: Optional[dict]) -> None:
+            if filters is not None:
+                self.filter_dates = filters.get("dates", [])
+                self.filter_tag_ids = filters.get("tag_ids", [])
+                self.filter_statuses = filters.get("statuses", [])
+                self.filter_priorities = filters.get("priorities", [])
+                self.selected_index = 0
                 self.call_later(self.refresh_subtasks_list)
-        self.app.push_screen(DatePickerModal(subtask.due_date), on_result)
+
+        unique_dates = sorted(set(s.due_date for s in self.subtasks if s.due_date))
+
+        self.app.push_screen(
+            FilterModal(
+                current_date_filters=self.filter_dates,
+                current_tag_filters=self.filter_tag_ids,
+                current_status_filters=self.filter_statuses,
+                current_priority_filters=self.filter_priorities,
+                all_tags=self.all_tags,
+                available_dates=unique_dates
+            ),
+            on_result
+        )
+
+    def action_reset_filters(self) -> None:
+        self.search_query = ""
+        self.filter_statuses = []
+        self.filter_tag_ids = []
+        self.filter_priorities = []
+        self.filter_dates = []
+        try:
+            self.query_one("#search-input", Input).value = ""
+        except: pass
+        self.selected_index = 0
+        self.call_later(self.refresh_subtasks_list)
+
+    def action_focus_search(self) -> None:
+        self.search_focused = True
+        self.query_one("#search-input", Input).focus()
+
+    def action_blur_search(self) -> None:
+        self.search_focused = False
+        try:
+            self.query_one("#search-input", Input).blur()
+        except:
+            pass
+        self.set_focus(None)
+
+    @on(Input.Changed, "#search-input")
+    async def on_search_changed(self, event: Input.Changed) -> None:
+        self.search_query = event.value.strip()
+        self.selected_index = 0
+        await self.refresh_subtasks_list()
+
+    @on(Input.Submitted, "#search-input")
+    def on_search_submitted(self) -> None:
+        self.action_blur_search()
     
     @on(Button.Pressed, "#add")
     def on_add(self) -> None:
@@ -418,6 +791,7 @@ class UnscheduledItemsModal(ModalScreen[Optional[dict]]):
         Binding("j", "move_down", show=False),
         Binding("space", "toggle_item", show=False),
         Binding("enter", "save", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
     ]
     
     def __init__(self, tasks: list[Task], all_groups: list[Group], **kwargs) -> None:
@@ -565,6 +939,12 @@ class UnscheduledItemsModal(ModalScreen[Optional[dict]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
         
 class DayItemsModal(ModalScreen[Optional[tuple]]):
     DEFAULT_CSS = """
@@ -1075,33 +1455,83 @@ class EditSubtaskModal(ModalScreen[Optional[dict]]):
     EditSubtaskModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
     EditSubtaskModal .section-label { margin-top: 1; color: $text-muted; }
     EditSubtaskModal Input { width: 100%; margin-bottom: 1; }
+    EditSubtaskModal .info-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
+    EditSubtaskModal .info-display { width: 1fr; padding: 0 1; }
     EditSubtaskModal .comments-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
     EditSubtaskModal .comments-display { width: 1fr; padding: 0 1; }
     EditSubtaskModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
     EditSubtaskModal Button { margin: 0 1; }
     """
-    BINDINGS = [Binding("escape", "cancel", show=False)]
-    
-    def __init__(self, subtask_text: str, comments: list[Comment] = None, 
-                 next_comment_id: int = 1, **kwargs) -> None:
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
+
+    def __init__(self, subtask_text: str, comments: list[Comment] = None,
+                 next_comment_id: int = 1, all_tags: list = None,
+                 selected_tags: list = None, priority: int = 0, due_date: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
         self.subtask_text = subtask_text
         self.comments = comments or []
         self.next_comment_id = next_comment_id
+        self.all_tags = all_tags or []
+        self.selected_tags = selected_tags or []
+        self.priority = priority
+        self.due_date = due_date
     
     def compose(self) -> ComposeResult:
         with Container():
             yield Label("✏️ Editar Subtarea", classes="modal-title")
             yield Label("Texto:", classes="section-label")
-            yield Input(value=self.subtask_text, id="subtask-input")
+            yield UndoableInput(value=self.subtask_text, id="subtask-input")
+
+            yield Label("Etiquetas:", classes="section-label")
+            with Horizontal(classes="info-row"):
+                yield Label(self._format_tags(), id="tags-display", classes="info-display")
+                yield Button("🏷️ Editar", id="manage-tags")
+
+            yield Label("Prioridad:", classes="section-label")
+            with Horizontal(classes="info-row"):
+                yield Label(self._format_priority(), id="priority-display", classes="info-display")
+                yield Button("⚡ Cambiar", id="manage-priority")
+
+            yield Label("Fecha límite:", classes="section-label")
+            with Horizontal(classes="info-row"):
+                yield Label(self._format_due_date(), id="due-date-display", classes="info-display")
+                yield Button("📅 Cambiar", id="manage-due-date")
+
             yield Label("Comentarios:", classes="section-label")
             with Horizontal(classes="comments-row"):
                 yield Label(self._format_comments(), id="comments-display", classes="comments-display")
                 yield Button("💬 Gestionar", id="manage-comments")
+
             with Horizontal(classes="button-row"):
                 yield Button("Guardar", variant="primary", id="save")
                 yield Button("Cancelar", variant="default", id="cancel")
     
+    def _format_tags(self) -> str:
+        if not self.selected_tags:
+            return "Sin etiquetas"
+        tag_names = []
+        for tag_id in self.selected_tags:
+            tag = next((t for t in self.all_tags if t.id == tag_id), None)
+            if tag:
+                tag_names.append(tag.name)
+        if not tag_names:
+            return "Sin etiquetas"
+        return " | ".join(tag_names)
+
+    def _format_priority(self) -> str:
+        if self.priority == 0:
+            return "Sin prioridad"
+        priority_names = {1: "🟢 Baja", 2: "🟡 Media", 3: "🔴 Alta"}
+        return priority_names.get(self.priority, "Sin prioridad")
+
+    def _format_due_date(self) -> str:
+        if not self.due_date:
+            return "Sin fecha"
+        return f"📅 {self.due_date}"
+
     def _format_comments(self) -> str:
         count = len(self.comments)
         if count == 0:
@@ -1110,10 +1540,34 @@ class EditSubtaskModal(ModalScreen[Optional[dict]]):
             return "💬 1 comentario"
         else:
             return f"💬 {count} comentarios"
-    
+
     def on_mount(self) -> None:
         self.query_one("#subtask-input", Input).focus()
-    
+
+    @on(Button.Pressed, "#manage-tags")
+    def on_manage_tags(self) -> None:
+        def on_result(selected_tag_ids: list[int]) -> None:
+            if selected_tag_ids is not None:
+                self.selected_tags = selected_tag_ids
+                self.query_one("#tags-display", Label).update(self._format_tags())
+        self.app.push_screen(TagPickerModal(self.all_tags, self.selected_tags), on_result)
+
+    @on(Button.Pressed, "#manage-priority")
+    def on_manage_priority(self) -> None:
+        def on_result(priority: Optional[int]) -> None:
+            if priority is not None:
+                self.priority = priority
+                self.query_one("#priority-display", Label).update(self._format_priority())
+        self.app.push_screen(PriorityPickerModal(self.priority), on_result)
+
+    @on(Button.Pressed, "#manage-due-date")
+    def on_manage_due_date(self) -> None:
+        def on_result(date_str: Optional[str]) -> None:
+            if date_str is not None:
+                self.due_date = date_str
+                self.query_one("#due-date-display", Label).update(self._format_due_date())
+        self.app.push_screen(DatePickerModal(self.due_date), on_result)
+
     @on(Button.Pressed, "#manage-comments")
     def on_manage_comments(self) -> None:
         def on_result(updated_comments: list[Comment]) -> None:
@@ -1122,17 +1576,23 @@ class EditSubtaskModal(ModalScreen[Optional[dict]]):
                 self.next_comment_id = max(c.id for c in self.comments) + 1
             self.query_one("#comments-display", Label).update(self._format_comments())
         self.app.push_screen(CommentsModal(self.comments, self.next_comment_id), on_result)
-    
+
     @on(Button.Pressed, "#save")
     def on_save(self) -> None:
+        self.action_save()
+
+    def action_save(self) -> None:
         text = self.query_one("#subtask-input", Input).value.strip()
         if not text:
             self.app.notify("El texto de la subtarea no puede estar vacío", severity="warning")
             return
-        
+
         self.dismiss({
             "text": text,
-            "comments": self.comments
+            "comments": self.comments,
+            "tags": self.selected_tags,
+            "priority": self.priority,
+            "due_date": self.due_date
         })
     
     @on(Button.Pressed, "#cancel")
@@ -1145,6 +1605,12 @@ class EditSubtaskModal(ModalScreen[Optional[dict]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
 
 class TaskWidget(Static):
     DEFAULT_CSS = """
@@ -1172,9 +1638,10 @@ class TaskWidget(Static):
     TaskWidget .task-text { width: 1fr; height: 1; }
     TaskWidget .tag { background: #90EE90; color: #000000; }
     TaskWidget .tag-separator { width: 1; }
-    TaskWidget .task-subtasks { width: 6; height: 1; text-align: right; color: $accent; }
-    TaskWidget .task-links { width: 3; height: 1; text-align: right; color: $accent; }
-    TaskWidget .task-images { width: 3; height: 1; text-align: right; color: $primary; }
+    TaskWidget .task-subtasks { width: 7; height: 1; text-align: right; color: $accent; }
+    TaskWidget .task-links { width: 4; height: 1; text-align: right; color: $accent; }
+    TaskWidget .task-images { width: 4; height: 1; text-align: right; color: $primary; }
+    TaskWidget .task-files { width: 4; height: 1; text-align: right; color: $warning; }
     TaskWidget .task-comments { width: 5; height: 1; text-align: right; color: $primary; }
     TaskWidget .task-group { width: 20; height: 1; text-align: right; color: $text-muted; }
     TaskWidget .task-date { width: 8; height: 1; text-align: right; color: $warning; }
@@ -1185,6 +1652,7 @@ class TaskWidget(Static):
     TaskWidget.done .task-comments { color: $text-muted; }
     TaskWidget.done .task-links { color: $text-muted; }
     TaskWidget.done .task-images { color: $text-muted; }
+    TaskWidget.done .task-files { color: $text-muted; }
     TaskWidget.done .task-subtasks { color: $text-muted; }
     TaskWidget.done .task-group { color: $text-muted; }
     TaskWidget.done .priority { color: $text-muted; }
@@ -1232,20 +1700,24 @@ class TaskWidget(Static):
         if self.task_data.subtasks:
             done_count = sum(1 for s in self.task_data.subtasks if s.done)
             total_count = len(self.task_data.subtasks)
-            subtasks_str = f"📋{done_count}/{total_count}"
+            subtasks_str = f"📋 {done_count}/{total_count}"
         else:
             subtasks_str = ""
         yield Label(subtasks_str, classes="task-subtasks")
         
         links_count = sum(1 for c in self.task_data.comments if c.url)
-        links_str = f"🔗{links_count}" if links_count > 0 else ""
+        links_str = f"🔗 {links_count}" if links_count > 0 else ""
         yield Label(links_str, classes="task-links")
-        
+
         images_count = sum(1 for c in self.task_data.comments if c.image_path)
-        images_str = f"📷{images_count}" if images_count > 0 else ""
+        images_str = f"📷 {images_count}" if images_count > 0 else ""
         yield Label(images_str, classes="task-images")
-        
-        comments_str = f"💬{len(self.task_data.comments)}" if self.task_data.comments else ""
+
+        files_count = sum(1 for c in self.task_data.comments if c.file_path)
+        files_str = f"📎 {files_count}" if files_count > 0 else ""
+        yield Label(files_str, classes="task-files")
+
+        comments_str = f"💬 {len(self.task_data.comments)}" if self.task_data.comments else ""
         yield Label(comments_str, classes="task-comments")
         
         group_str = self._format_group_name()
@@ -1402,7 +1874,10 @@ class InputModal(ModalScreen[Optional[str]]):
     InputModal .button-row { width: 100%; height: auto; align: center middle; }
     InputModal Button { margin: 0 1; }
     """
-    BINDINGS = [Binding("escape", "cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
     
     def __init__(self, title: str = "", initial_text: str = "", placeholder: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
@@ -1413,7 +1888,7 @@ class InputModal(ModalScreen[Optional[str]]):
     def compose(self) -> ComposeResult:
         with Container():
             yield Label(self.title_text, classes="modal-title")
-            yield Input(value=self.initial_text, placeholder=self.placeholder_text, id="modal-input")
+            yield UndoableInput(value=self.initial_text, placeholder=self.placeholder_text, id="modal-input")
             with Horizontal(classes="button-row"):
                 yield Button("Guardar", variant="primary", id="save")
                 yield Button("Cancelar", variant="default", id="cancel")
@@ -1423,8 +1898,7 @@ class InputModal(ModalScreen[Optional[str]]):
     
     @on(Button.Pressed, "#save")
     def on_save(self) -> None:
-        text = self.query_one("#modal-input", Input).value.strip()
-        self.dismiss(text if text else None)
+        self.action_save()
     
     @on(Button.Pressed, "#cancel")
     def on_cancel(self) -> None:
@@ -1436,6 +1910,19 @@ class InputModal(ModalScreen[Optional[str]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+    
+    def action_save(self) -> None:
+        text = self.query_one("#modal-input", Input).value.strip()
+        self.dismiss(text if text else None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
 
 class ReminderModal(ModalScreen[bool]):
     DEFAULT_CSS = """
@@ -1596,62 +2083,88 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     CommentEditModal { align: center middle; }
     CommentEditModal > Container {
-        width: 78; height: 30; border: thick $primary;
+        width: 82; height: 50; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     CommentEditModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
     CommentEditModal .section-label { margin-top: 1; margin-bottom: 0; color: $text-muted; }
-    CommentEditModal Input { width: 100%; margin-bottom: 1; }
-    CommentEditModal .image-info { 
-        width: 100%; 
-        padding: 1; 
+    CommentEditModal #title-input {
+        width: 100%;
+        margin-bottom: 0;
+    }
+    CommentEditModal #description-input {
+        width: 100%;
+        height: 8;
+        margin-bottom: 0;
+        border: solid $primary;
+        padding: 1;
+    }
+    CommentEditModal Input { width: 100%; margin-bottom: 0; }
+    CommentEditModal .image-info {
+        width: 100%;
+        padding: 1;
         background: $surface-lighten-1;
         border: solid $primary-background;
-        margin-bottom: 1;
+        margin-bottom: 0;
         color: $success;
     }
-    CommentEditModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
-    CommentEditModal .image-button-row { 
-        width: 100%; 
-        height: auto; 
-        align: left middle; 
-        margin-bottom: 1;
+    CommentEditModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 2; }
+    CommentEditModal .image-button-row {
+        width: 100%;
+        height: auto;
+        align: left middle;
+        margin-bottom: 0;
         layout: horizontal;
     }
     CommentEditModal Button { margin: 0 1; }
+    CommentEditModal #image-info-container { margin-bottom: 0; }
+    CommentEditModal #file-info-container { margin-bottom: 1; }
     """
-    BINDINGS = [Binding("escape", "cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
     
-    def __init__(self, title: str = "💬 Comentario", initial_text: str = "", 
-                 initial_url: str = "", initial_image: str = "", **kwargs) -> None:
+    def __init__(self, modal_title: str = "💬 Comentario", initial_title: str = "",
+                 initial_description: str = "", initial_url: str = "", initial_image: str = "",
+                 initial_file: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
-        self.title_text = title
-        self.initial_text = initial_text
+        self.modal_title = modal_title
+        self.initial_title = initial_title
+        self.initial_description = initial_description
         self.initial_url = initial_url or ""
         self.current_image_path = initial_image or ""
+        self.current_file_path = initial_file or ""
         self.images_dir = Path.home() / "todo" / "images"
         self.images_dir.mkdir(exist_ok=True, parents=True)
+        self.files_dir = Path.home() / "todo" / "files"
+        self.files_dir.mkdir(exist_ok=True, parents=True)
     
     def compose(self) -> ComposeResult:
         with Container():
-            yield Label(self.title_text, classes="modal-title")
-            yield Label("Texto del comentario:", classes="section-label")
-            yield Input(value=self.initial_text, placeholder="Escribe el comentario...", id="text-input")
+            yield Label(self.modal_title, classes="modal-title")
+            yield Label("Título del comentario:", classes="section-label")
+            yield UndoableInput(value=self.initial_title, placeholder="Título breve...", id="title-input")
+            yield Label("Descripción (opcional - Enter para nueva línea):", classes="section-label")
+            yield UndoableTextArea(self.initial_description, id="description-input", show_line_numbers=False)
             yield Label("Enlace (opcional):", classes="section-label")
-            yield Input(value=self.initial_url, placeholder="https://ejemplo.com", id="url-input")
+            yield UndoableInput(value=self.initial_url, placeholder="https://ejemplo.com ", id="url-input")
             yield Label("Imagen (opcional):", classes="section-label")
             yield Horizontal(id="image-button-row", classes="image-button-row")
             yield Container(id="image-info-container")
+            yield Label("Archivo adjunto (opcional):", classes="section-label")
+            yield Horizontal(id="file-button-row", classes="image-button-row")
+            yield Container(id="file-info-container")
             with Horizontal(classes="button-row"):
                 yield Button("Guardar", variant="primary", id="save")
                 yield Button("Cancelar", variant="default", id="cancel")
     
     async def on_mount(self) -> None:
-        self.query_one("#text-input", Input).focus()
+        self.query_one("#title-input", Input).focus()
         await self._update_image_buttons()
+        await self._update_file_buttons()
     
     async def _update_image_buttons(self) -> None:
-        """Actualiza los botones de imagen según si hay imagen o no"""
         button_row = self.query_one("#image-button-row", Horizontal)
         await button_row.remove_children()
         
@@ -1670,9 +2183,36 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
                 Label(f"📷 Imagen: {Path(self.current_image_path).name}", 
                       id="image-info", classes="image-info")
             )
-    
+
+    async def _update_file_buttons(self) -> None:
+        button_row = self.query_one("#file-button-row", Horizontal)
+        await button_row.remove_children()
+
+        await button_row.mount(Button("📁 Examinar archivo", variant="default", id="browse-file"))
+
+        if self.current_file_path:
+            await button_row.mount(Button("🗑️ Eliminar", variant="error", id="remove-file"))
+
+        info_container = self.query_one("#file-info-container", Container)
+        await info_container.remove_children()
+
+        if self.current_file_path:
+            file_path = Path(self.current_file_path)
+            file_size = file_path.stat().st_size if file_path.exists() else 0
+            size_str = self._format_file_size(file_size)
+            await info_container.mount(
+                Label(f"📎 Archivo: {file_path.name} ({size_str})",
+                      id="file-info", classes="image-info")
+            )
+
+    def _format_file_size(self, size_bytes: int) -> str:
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.1f} TB"
+
     def _save_image_from_clipboard(self) -> Optional[str]:
-        """Intenta guardar una imagen desde el portapapeles"""
         try:
             from PIL import ImageGrab
             image = ImageGrab.grabclipboard()
@@ -1695,7 +2235,6 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
             return None
     
     def _copy_image_to_storage(self, source_path: str) -> Optional[str]:
-        """Copia una imagen al directorio de almacenamiento"""
         try:
             source = Path(source_path)
             if not source.exists():
@@ -1713,28 +2252,168 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
             return None
     
     def _browse_image(self) -> Optional[str]:
-        """Abre el explorador de archivos para seleccionar una imagen"""
         try:
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            
-            filepath = filedialog.askopenfilename(
-                title="Seleccionar imagen",
-                filetypes=[
-                    ("Imágenes", "*.png *.jpg *.jpeg *.gif *.bmp *.webp"),
-                    ("Todos los archivos", "*.*")
-                ]
-            )
-            root.destroy()
-            
-            if filepath:
-                return self._copy_image_to_storage(filepath)
+            system = platform.system()
+
+            if system == "Windows":
+                ps_script = '''
+                Add-Type -AssemblyName System.Windows.Forms
+                $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog -Property @{
+                    Filter = 'Imágenes (*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp)|*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp|Todos los archivos (*.*)|*.*'
+                    Title = 'Seleccionar imagen'
+                }
+                $null = $FileBrowser.ShowDialog()
+                Write-Output $FileBrowser.FileName
+                '''
+
+                result = subprocess.run(
+                    ["powershell", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+
+                filepath = result.stdout.strip()
+                return filepath if filepath else None
+
+            elif system == "Darwin":
+                script = '''
+                set theFile to choose file with prompt "Seleccionar imagen" of type {"png", "jpg", "jpeg", "gif", "bmp", "webp"}
+                return POSIX path of theFile
+                '''
+
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+
+                filepath = result.stdout.strip()
+                return filepath if filepath else None
+
+            else:
+                try:
+                    result = subprocess.run(
+                        [
+                            "zenity", "--file-selection",
+                            "--title=Seleccionar imagen",
+                            "--file-filter=Imágenes | *.png *.jpg *.jpeg *.gif *.bmp *.webp",
+                            "--file-filter=Todos los archivos | *"
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=300
+                    )
+                    filepath = result.stdout.strip()
+                    return filepath if filepath else None
+                except FileNotFoundError:
+                    try:
+                        result = subprocess.run(
+                            [
+                                "kdialog", "--getopenfilename", ".",
+                                "*.png *.jpg *.jpeg *.gif *.bmp *.webp|Imágenes"
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=300
+                        )
+                        filepath = result.stdout.strip()
+                        return filepath if filepath else None
+                    except FileNotFoundError:
+                        print("No hay explorador de archivos nativo disponible (zenity/kdialog)")
+                        return None
+
+        except subprocess.TimeoutExpired:
+            print("Tiempo de espera agotado al seleccionar archivo")
             return None
         except Exception as e:
-            print(f"Error al abrir explorador: {e}")
+            print(f"Error al abrir explorador nativo: {e}")
             return None
-    
+
+    def _browse_file(self) -> Optional[str]:
+        try:
+            system = platform.system()
+
+            if system == "Windows":
+                ps_script = '''
+                Add-Type -AssemblyName System.Windows.Forms
+                $FileBrowser = New-Object System.Windows.Forms.OpenFileDialog -Property @{
+                    Filter = 'Todos los archivos (*.*)|*.*'
+                    Title = 'Seleccionar archivo'
+                }
+                $null = $FileBrowser.ShowDialog()
+                Write-Output $FileBrowser.FileName
+                '''
+
+                result = subprocess.run(
+                    ["powershell", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+
+                filepath = result.stdout.strip()
+                return filepath if filepath else None
+
+            elif system == "Darwin":
+                script = 'set theFile to choose file with prompt "Seleccionar archivo"\nreturn POSIX path of theFile'
+
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+
+                filepath = result.stdout.strip()
+                return filepath if filepath else None
+
+            else:
+                try:
+                    result = subprocess.run(
+                        ["zenity", "--file-selection", "--title=Seleccionar archivo"],
+                        capture_output=True,
+                        text=True,
+                        timeout=300
+                    )
+                    filepath = result.stdout.strip()
+                    return filepath if filepath else None
+                except FileNotFoundError:
+                    try:
+                        result = subprocess.run(
+                            ["kdialog", "--getopenfilename", "."],
+                            capture_output=True,
+                            text=True,
+                            timeout=300
+                        )
+                        filepath = result.stdout.strip()
+                        return filepath if filepath else None
+                    except FileNotFoundError:
+                        print("No hay explorador de archivos nativo disponible")
+                        return None
+
+        except subprocess.TimeoutExpired:
+            print("Tiempo de espera agotado al seleccionar archivo")
+            return None
+        except Exception as e:
+            print(f"Error al abrir explorador nativo: {e}")
+            return None
+
+    def _copy_file_to_storage(self, source_path: str) -> Optional[str]:
+        try:
+            source = Path(source_path)
+            if not source.exists():
+                return None
+
+            filename = f"{source.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{source.suffix}"
+            filepath = self.files_dir / filename
+            shutil.copy2(source, filepath)
+            return str(filepath)
+        except Exception as e:
+            print(f"Error al copiar archivo: {e}")
+            return None
+
     @on(Button.Pressed, "#paste-image")
     async def on_paste_image(self) -> None:
         image_path = self._save_image_from_clipboard()
@@ -1747,11 +2426,24 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
     
     @on(Button.Pressed, "#browse-image")
     async def on_browse_image(self) -> None:
-        image_path = self._browse_image()
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            image_path = await loop.run_in_executor(executor, self._browse_image)
+
         if image_path:
-            self.current_image_path = image_path
-            await self._update_image_buttons()
-            self.app.notify("📷 Imagen seleccionada", severity="information")
+            copied_path = self._copy_image_to_storage(image_path)
+            if copied_path:
+                self.current_image_path = copied_path
+                await self._update_image_buttons()
+                self.app.notify("📷 Imagen seleccionada", severity="information")
+
+        try:
+            self.query_one("#text-input", TextArea).focus()
+        except:
+            pass
     
     @on(Button.Pressed, "#path-image")
     def on_path_image(self) -> None:
@@ -1777,47 +2469,105 @@ class CommentEditModal(ModalScreen[Optional[dict]]):
         self.current_image_path = ""
         await self._update_image_buttons()
         self.app.notify("🗑️ Imagen eliminada", severity="information")
+
+    @on(Button.Pressed, "#browse-file")
+    async def on_browse_file(self) -> None:
+        import asyncio
+        from concurrent.futures import ThreadPoolExecutor
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            file_path = await loop.run_in_executor(executor, self._browse_file)
+
+        if file_path:
+            copied_path = self._copy_file_to_storage(file_path)
+            if copied_path:
+                self.current_file_path = copied_path
+                await self._update_file_buttons()
+                self.app.notify("📎 Archivo adjuntado", severity="information")
+
+        try:
+            self.query_one("#text-input", TextArea).focus()
+        except:
+            pass
+
+    @on(Button.Pressed, "#remove-file")
+    async def on_remove_file(self) -> None:
+        self.current_file_path = ""
+        await self._update_file_buttons()
+        self.app.notify("🗑️ Archivo eliminado", severity="information")
+
+    def action_save(self) -> None:
+        try:
+            text_area = self.query_one("#text-input", TextArea)
+            text_area.blur()
+        except:
+            pass
+        
+        self.call_later(self._real_save)
     
-    @on(Button.Pressed, "#save")
-    def on_save(self) -> None:
-        text = self.query_one("#text-input", Input).value.strip()
+    def _real_save(self) -> None:
+        title = self.query_one("#title-input", Input).value.strip()
+        description = self.query_one("#description-input", TextArea).text.strip()
         url = self.query_one("#url-input", Input).value.strip()
-        
-        if not text:
-            self.app.notify("El texto del comentario no puede estar vacío", severity="warning")
+
+        if not title:
+            self.app.notify("El título del comentario no puede estar vacío", severity="warning")
             return
-        
+
         if url and not (url.startswith("http://") or url.startswith("https://")):
             self.app.notify("La URL debe comenzar con http:// o https://", severity="warning")
             return
-        
+
         self.dismiss({
-            "text": text,
+            "title": title,
+            "description": description,
             "url": url if url else None,
-            "image_path": self.current_image_path if self.current_image_path else None
+            "image_path": self.current_image_path if self.current_image_path else None,
+            "file_path": self.current_file_path if self.current_file_path else None
         })
     
-    @on(Button.Pressed, "#cancel")
-    def on_cancel(self) -> None:
-        self.dismiss(None)
+    @on(Button.Pressed, "#save")
+    def on_save_btn(self) -> None:
+        self.action_save()
     
-    @on(Input.Submitted)
-    def on_submit(self, event: Input.Submitted) -> None:
-        if event.input.id == "text-input":
-            self.on_save()
+    @on(Button.Pressed, "#cancel")
+    def on_cancel_btn(self) -> None:
+        self.dismiss(None)
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
+            return
+        
+        if event.key == "ctrl+enter":
+            event.prevent_default()
+            event.stop()
+            text_area = self.query_one("#description-input", TextArea)
+            current_text = text_area.text
+            cursor_pos = text_area.cursor
+            new_text = current_text[:cursor_pos] + "\n" + current_text[cursor_pos:]
+            text_area.text = new_text
+            text_area.cursor = cursor_pos + 1
+            return
+    
+    def on_destroy(self) -> None:
+        pass
 
 class CommentsModal(ModalScreen[list[Comment]]):
     DEFAULT_CSS = """
     CommentsModal { align: center middle; }
     CommentsModal > Container {
-        width: 80; height: 26; border: thick $primary;
+        width: 82; height: 30; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     CommentsModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
-    CommentsModal #comments-list { width: 100%; height: 12; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    CommentsModal #comments-list { width: 100%; height: 14; overflow-y: auto; border: solid $primary-background; padding: 1; }
     CommentsModal .comment-item {
         width: 100%; height: 3; padding: 0 1;
         border: solid $primary-background; margin-bottom: 1;
@@ -1825,8 +2575,8 @@ class CommentsModal(ModalScreen[list[Comment]]):
     CommentsModal .comment-item:hover { background: $boost; }
     CommentsModal .comment-item.selected { border: solid $accent; background: $surface-lighten-1; }
     CommentsModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
-    CommentsModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
-    CommentsModal .button-row { width: 100%; height: 3; align: center middle; }
+    CommentsModal .hint { width: 100%; height: auto; text-align: center; color: $text-muted; margin: 1 0; }
+    CommentsModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
     CommentsModal Button { margin: 0 1; }
     """
     BINDINGS = [
@@ -1841,12 +2591,14 @@ class CommentsModal(ModalScreen[list[Comment]]):
         Binding("ctrl+o", "open_link", show=False),
         Binding("enter", "open_link", show=False),
         Binding("v", "view_image", show=False),
+        Binding("f", "open_file", show=False),
     ]
     
     def __init__(self, comments: list[Comment], next_comment_id: int, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.comments = [Comment(id=c.id, text=c.text, url=c.url, 
-                                image_path=c.image_path, created_at=c.created_at) 
+        self.comments = [Comment(id=c.id, title=c.title, description=c.description,
+                                url=c.url, image_path=c.image_path, file_path=c.file_path,
+                                created_at=c.created_at)
                         for c in comments]
         self.next_comment_id = next_comment_id
         self.selected_index = 0 if comments else -1
@@ -1855,7 +2607,7 @@ class CommentsModal(ModalScreen[list[Comment]]):
         with Container():
             yield Label("💬 Comentarios", classes="modal-title")
             yield Container(id="comments-list")
-            yield Label("↑↓ Navegar | a: Añadir | e: Editar | d: Eliminar | Enter: Abrir enlace | v: Ver imagen | Esc: Cerrar", classes="hint")
+            yield Label("↑↓ Navegar | a: Añadir | e: Editar | d: Eliminar | Enter: Abrir enlace | v: Ver imagen | f: Abrir archivo | Esc: Cerrar", classes="hint")
             with Horizontal(classes="button-row"):
                 yield Button("➕ Añadir", variant="primary", id="add")
                 yield Button("✏️ Editar", variant="default", id="edit")
@@ -1863,6 +2615,14 @@ class CommentsModal(ModalScreen[list[Comment]]):
     
     async def on_mount(self) -> None:
         await self.refresh_comments_list()
+    
+    def _truncate_comment_preview(self, text: str, max_length: int = 50) -> str:
+        single_line = text.replace('\n', ' ').replace('\r', ' ')
+        single_line = ' '.join(single_line.split())
+        
+        if len(single_line) <= max_length:
+            return single_line
+        return single_line[:max_length] + "..."
     
     async def refresh_comments_list(self) -> None:
         comments_list = self.query_one("#comments-list", Container)
@@ -1873,12 +2633,13 @@ class CommentsModal(ModalScreen[list[Comment]]):
             self.selected_index = -1
         else:
             for i, comment in enumerate(self.comments):
-                text = comment.text[:35] + "..." if len(comment.text) > 35 else comment.text
-                
+                preview_text = self._truncate_comment_preview(comment.title, 35)
+
                 link_icon = " 🔗" if comment.url else ""
                 image_icon = " 📷" if comment.image_path else ""
-                display_text = f"{text}{link_icon}{image_icon}  [{comment.created_at}]"
-                
+                file_icon = " 📎" if comment.file_path else ""
+                display_text = f"{preview_text}{link_icon}{image_icon}{file_icon}  [{comment.created_at}]"
+
                 item = Static(display_text, id=f"comment-{i}", classes="comment-item")
                 await comments_list.mount(item)
                 if i == self.selected_index:
@@ -1912,12 +2673,14 @@ class CommentsModal(ModalScreen[list[Comment]]):
     
     def action_add_comment(self) -> None:
         def on_result(result: Optional[dict]) -> None:
-            if result and result.get("text"):
+            if result and result.get("title"):
                 comment = Comment(
-                    id=self.next_comment_id, 
-                    text=result["text"],
+                    id=self.next_comment_id,
+                    title=result["title"],
+                    description=result.get("description", ""),
                     url=result.get("url"),
-                    image_path=result.get("image_path")
+                    image_path=result.get("image_path"),
+                    file_path=result.get("file_path")
                 )
                 self.next_comment_id += 1
                 self.comments.append(comment)
@@ -1930,14 +2693,18 @@ class CommentsModal(ModalScreen[list[Comment]]):
             return
         comment = self.comments[self.selected_index]
         def on_result(result: Optional[dict]) -> None:
-            if result and result.get("text"):
-                comment.text = result["text"]
+            if result and result.get("title"):
+                comment.title = result["title"]
+                comment.description = result.get("description", "")
                 comment.url = result.get("url")
                 comment.image_path = result.get("image_path")
+                comment.file_path = result.get("file_path")
                 self.call_later(self.refresh_comments_list)
         self.app.push_screen(
-            CommentEditModal("✏️ Editar Comentario", initial_text=comment.text, 
-                           initial_url=comment.url, initial_image=comment.image_path),
+            CommentEditModal("✏️ Editar Comentario", initial_title=comment.title,
+                           initial_description=comment.description,
+                           initial_url=comment.url, initial_image=comment.image_path,
+                           initial_file=comment.file_path or ""),
             on_result
         )
     
@@ -1945,7 +2712,8 @@ class CommentsModal(ModalScreen[list[Comment]]):
         if not self.comments or self.selected_index < 0:
             return
         comment = self.comments[self.selected_index]
-        txt = comment.text[:30] + "..." if len(comment.text) > 30 else comment.text
+        txt = self._truncate_comment_preview(comment.title, 30)
+        
         def on_confirm(yes: bool) -> None:
             if yes:
                 if comment.image_path and Path(comment.image_path).exists():
@@ -1953,7 +2721,13 @@ class CommentsModal(ModalScreen[list[Comment]]):
                         Path(comment.image_path).unlink()
                     except:
                         pass
-                
+
+                if comment.file_path and Path(comment.file_path).exists():
+                    try:
+                        Path(comment.file_path).unlink()
+                    except:
+                        pass
+
                 self.comments.pop(self.selected_index)
                 if self.selected_index >= len(self.comments) and self.selected_index > 0:
                     self.selected_index -= 1
@@ -1986,7 +2760,30 @@ class CommentsModal(ModalScreen[list[Comment]]):
                 self.app.notify("❌ Imagen no encontrada", severity="error")
         else:
             self.app.notify("Este comentario no tiene imagen", severity="warning")
-    
+
+    def action_open_file(self) -> None:
+        if not self.comments or self.selected_index < 0:
+            return
+        comment = self.comments[self.selected_index]
+        if comment.file_path:
+            file_path = Path(comment.file_path)
+            if file_path.exists():
+                try:
+                    system = platform.system()
+                    if system == "Windows":
+                        os.startfile(str(file_path))
+                    elif system == "Darwin":
+                        subprocess.run(["open", str(file_path)], check=True)
+                    else:
+                        subprocess.run(["xdg-open", str(file_path)], check=True)
+                    self.app.notify(f"📎 Abriendo: {file_path.name}", severity="information")
+                except Exception as e:
+                    self.app.notify(f"❌ Error al abrir archivo: {str(e)}", severity="error")
+            else:
+                self.app.notify("❌ Archivo no encontrado", severity="error")
+        else:
+            self.app.notify("Este comentario no tiene archivo adjunto", severity="warning")
+
     @on(Button.Pressed, "#add")
     def on_add(self) -> None:
         self.action_add_comment()
@@ -2006,13 +2803,13 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
     DEFAULT_CSS = """
     TagsManagerModal { align: center middle; }
     TagsManagerModal > Container {
-        width: 60; height: 30; border: thick $primary;
+        width: 65; height: 34; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     TagsManagerModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
     TagsManagerModal .search-label { color: $text-muted; margin-bottom: 0; }
     TagsManagerModal Input { width: 100%; margin-bottom: 1; }
-    TagsManagerModal #tags-list { width: 100%; height: 12; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    TagsManagerModal #tags-list { width: 100%; height: 14; overflow-y: auto; border: solid $primary-background; padding: 1; }
     TagsManagerModal .tag-item {
         width: 100%; height: 3; padding: 0 1;
         border: solid $primary-background; margin-bottom: 1;
@@ -2020,8 +2817,8 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
     TagsManagerModal .tag-item:hover { background: $boost; }
     TagsManagerModal .tag-item.selected { border: solid $accent; background: $surface-lighten-1; }
     TagsManagerModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
-    TagsManagerModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
-    TagsManagerModal .button-row { width: 100%; height: 3; align: center middle; }
+    TagsManagerModal .hint { width: 100%; height: auto; text-align: center; color: $text-muted; margin: 1 0; }
+    TagsManagerModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
     TagsManagerModal Button { margin: 0 1; }
     """
     
@@ -2052,7 +2849,7 @@ class TagsManagerModal(ModalScreen[list[Tag]]):
         with Container():
             yield Label("🏷️  Gestionar Etiquetas", classes="modal-title")
             yield Label("🔍 Buscar (/ para activar, Tab para salir):", classes="search-label")
-            yield Input(placeholder="Escribe para buscar etiquetas...", id="search-input")
+            yield UndoableInput(placeholder="Escribe para buscar etiquetas...", id="search-input")
             yield Container(id="tags-list")
             yield Label("↑↓ Navegar | a: Añadir | e: Editar | d: Eliminar | /: Buscar | Tab: Salir búsqueda | Esc: Cerrar", classes="hint")
             with Horizontal(classes="button-row"):
@@ -2246,13 +3043,13 @@ class TagPickerModal(ModalScreen[list[int]]):
     DEFAULT_CSS = """
     TagPickerModal { align: center middle; }
     TagPickerModal > Container {
-        width: 60; height: 26; border: thick $primary;
+        width: 65; height: auto; max-height: 90%; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     TagPickerModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
     TagPickerModal .search-label { color: $text-muted; margin-bottom: 0; }
     TagPickerModal Input { width: 100%; margin-bottom: 1; }
-    TagPickerModal #tags-list { width: 100%; height: 12; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    TagPickerModal #tags-list { width: 100%; height: auto; max-height: 20; overflow-y: auto; border: solid $primary-background; padding: 1; }
     TagPickerModal .tag-item {
         width: 100%; height: 3; padding: 0 1;
         border: solid $primary-background; margin-bottom: 1;
@@ -2261,8 +3058,8 @@ class TagPickerModal(ModalScreen[list[int]]):
     TagPickerModal .tag-item.selected { border: solid $accent; background: $surface-lighten-1; }
     TagPickerModal .tag-item.checked { color: $success; }
     TagPickerModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
-    TagPickerModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
-    TagPickerModal .button-row { width: 100%; height: 3; align: center middle; }
+    TagPickerModal .hint { width: 100%; height: auto; text-align: center; color: $text-muted; margin: 1 0; }
+    TagPickerModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
     TagPickerModal Button { margin: 0 1; }
     """
     BINDINGS = [
@@ -2276,6 +3073,7 @@ class TagPickerModal(ModalScreen[list[int]]):
         Binding("ctrl+f", "focus_search", show=False),
         Binding("/", "focus_search", show=False),
         Binding("tab", "blur_search", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
     ]
     
     def __init__(self, all_tags: list[Tag], selected_tag_ids: list[int], **kwargs) -> None:
@@ -2291,7 +3089,7 @@ class TagPickerModal(ModalScreen[list[int]]):
         with Container():
             yield Label("🏷️  Seleccionar Etiquetas", classes="modal-title")
             yield Label("🔍 Buscar (/ para activar, Tab para salir):", classes="search-label")
-            yield Input(placeholder="Escribe para buscar etiquetas...", id="search-input")
+            yield UndoableInput(placeholder="Escribe para buscar etiquetas...", id="search-input")
             yield Container(id="tags-list")
             yield Label("↑↓ Navegar | Espacio: Marcar | /: Buscar | Tab: Salir búsqueda | Enter: Guardar", classes="hint")
             with Horizontal(classes="button-row"):
@@ -2410,6 +3208,12 @@ class TagPickerModal(ModalScreen[list[int]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
 
 class StatusFilterPickerModal(ModalScreen[Optional[list[str]]]):
     DEFAULT_CSS = """
@@ -2657,7 +3461,10 @@ class FilterModal(ModalScreen[Optional[dict]]):
     FilterModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
     FilterModal Button { margin: 0 1; }
     """
-    BINDINGS = [Binding("escape", "cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
     
     def __init__(self, current_date_filters: list[str], current_tag_filters: list[int],
                  current_status_filters: list[str], current_priority_filters: list[int],
@@ -2795,6 +3602,9 @@ class FilterModal(ModalScreen[Optional[dict]]):
     
     @on(Button.Pressed, "#apply")
     def on_apply(self) -> None:
+        self.action_apply()
+    
+    def action_apply(self) -> None:
         self.dismiss({
             "dates": self.date_filters,
             "tags": self.tag_filters,
@@ -2808,6 +3618,12 @@ class FilterModal(ModalScreen[Optional[dict]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
 
 class DateFilterPickerModal(ModalScreen[Optional[list[str]]]):
     DEFAULT_CSS = """
@@ -2933,11 +3749,11 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     DEFAULT_CSS = """
     EditTaskModal { align: center middle; }
     EditTaskModal > Container {
-        width: 60; height: auto; border: thick $primary;
+        width: 65; min-height: 48; max-height: 90%; border: thick $primary;
         background: $surface; padding: 1 2;
     }
     EditTaskModal .modal-title { text-align: center; text-style: bold; width: 100%; margin-bottom: 1; }
-    EditTaskModal .section-label { margin-top: 1; color: $text-muted; }
+    EditTaskModal .section-label { margin-top: 0; margin-bottom: 0; color: $text-muted; }
     EditTaskModal Input { width: 100%; margin-bottom: 1; }
     EditTaskModal .date-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
     EditTaskModal .group-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
@@ -2949,12 +3765,15 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     EditTaskModal .priority-display { width: 1fr; padding: 0 1; }
     EditTaskModal .comments-display { width: 1fr; padding: 0 1; }
     EditTaskModal .tags-display { width: 1fr; padding: 0 1; }
-    EditTaskModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 1; }
-    EditTaskModal Button { margin: 0 1; }
     EditTaskModal .subtasks-row { width: 100%; height: auto; align: left middle; margin-bottom: 1; }
     EditTaskModal .subtasks-display { width: 1fr; padding: 0 1; }
+    EditTaskModal .button-row { width: 100%; height: auto; align: center middle; margin-top: 2; }
+    EditTaskModal Button { margin: 0 1; }
     """
-    BINDINGS = [Binding("escape", "cancel", show=False)]
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
     
     def __init__(self, task_text: str, current_date: Optional[str] = None,
                 current_group_id: Optional[int] = None, groups: list[Group] = None,
@@ -2980,7 +3799,7 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
         with Container():
             yield Label("✏️  Editar Tarea", classes="modal-title")
             yield Label("Texto:", classes="section-label")
-            yield Input(value=self.task_text, id="task-input")
+            yield UndoableInput(value=self.task_text, id="task-input")
             yield Label("Grupo:", classes="section-label")
             with Horizontal(classes="group-row"):
                 yield Label(self._format_group(self.selected_group_id), id="group-display", classes="group-display")
@@ -3080,8 +3899,8 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
                 max_id = max(c.id for c in subtask.comments)
                 if max_id >= next_comment_id:
                     next_comment_id = max_id + 1
-        
-        self.app.push_screen(SubtasksModal(self.subtasks, self.next_subtask_id, next_comment_id), on_result)  
+
+        self.app.push_screen(SubtasksModal(self.subtasks, self.next_subtask_id, next_comment_id, all_tags=self.all_tags), on_result)  
     
     @on(Button.Pressed, "#change-group")
     def on_change_group(self) -> None:
@@ -3130,6 +3949,9 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     
     @on(Button.Pressed, "#save")
     def on_save(self) -> None:
+        self.action_save()
+    
+    def action_save(self) -> None:
         text = self.query_one("#task-input", Input).value.strip()
         if not text:
             self.dismiss(None)
@@ -3155,6 +3977,12 @@ class EditTaskModal(ModalScreen[Optional[dict]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
 
 class DatePickerModal(ModalScreen[Optional[str]]):
     DEFAULT_CSS = """
@@ -3179,6 +4007,7 @@ class DatePickerModal(ModalScreen[Optional[str]]):
         Binding("n", "next_month", show=False),
         Binding("p", "prev_month", show=False),
         Binding("enter", "select_date", show=False),
+        Binding("ctrl+s", "select_date", show=False, priority=True),
     ]
     
     def __init__(self, current_date: Optional[str] = None, **kwargs) -> None:
@@ -3264,6 +4093,12 @@ class DatePickerModal(ModalScreen[Optional[str]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_select_date()
 
 class ConfirmModal(ModalScreen[bool]):
     DEFAULT_CSS = """
@@ -3771,6 +4606,7 @@ class SortPickerModal(ModalScreen[Optional[dict[str, Optional[str]]]]):
         Binding("j", "move_down", show=False),
         Binding("space", "toggle_sort", show=False),
         Binding("enter", "save", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
     ]
     
     def __init__(self, current_criteria: dict[str, Optional[str]], **kwargs) -> None:
@@ -3914,6 +4750,206 @@ class SortPickerModal(ModalScreen[Optional[dict[str, Optional[str]]]]):
     
     def action_cancel(self) -> None:
         self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
+
+class EditDayItemsModal(ModalScreen[Optional[dict]]):
+    DEFAULT_CSS = """
+    EditDayItemsModal { align: center middle; }
+    EditDayItemsModal > Container {
+        width: 80; height: 32; border: thick $primary;
+        background: $surface; padding: 1 2;
+    }
+    EditDayItemsModal .modal-title { text-align: center; text-style: bold; width: 100%; height: 1; margin-bottom: 1; }
+    EditDayItemsModal .info-text { width: 100%; text-align: center; color: $text-muted; margin-bottom: 1; }
+    EditDayItemsModal .section-header { 
+        width: 100%; 
+        text-align: left; 
+        text-style: bold; 
+        color: $accent;
+        margin: 1 0;
+        padding: 0 1;
+    }
+    EditDayItemsModal #items-list { width: 100%; height: 18; overflow-y: auto; border: solid $primary-background; padding: 1; }
+    EditDayItemsModal .item {
+        width: 100%; height: 3; padding: 0 1;
+        border: solid $primary-background; margin-bottom: 1;
+    }
+    EditDayItemsModal .item:hover { background: $boost; }
+    EditDayItemsModal .item.selected { border: solid $accent; background: $surface-lighten-1; }
+    EditDayItemsModal .item.checked { color: $error; }
+    EditDayItemsModal .empty-msg { width: 100%; text-align: center; color: $text-muted; text-style: italic; padding: 2; }
+    EditDayItemsModal .hint { width: 100%; height: 1; text-align: center; color: $text-muted; margin: 1 0; }
+    EditDayItemsModal .button-row { width: 100%; height: 3; align: center middle; }
+    EditDayItemsModal Button { margin: 0 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", show=False),
+        Binding("up", "move_up", show=False),
+        Binding("down", "move_down", show=False),
+        Binding("k", "move_up", show=False),
+        Binding("j", "move_down", show=False),
+        Binding("space", "toggle_item", show=False),
+        Binding("enter", "save", show=False),
+        Binding("ctrl+s", "save", show=False, priority=True),
+    ]
+    
+    def __init__(self, tasks: list[Task], all_groups: list[Group], date_str: str, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.all_groups = all_groups
+        self.date_str = date_str
+        
+        self.items = []
+        
+        for task in tasks:
+            if task.due_date == date_str:
+                group_name = self._get_group_name(task.group_id)
+                self.items.append(("task", task.id, None, task.text, group_name))
+            
+            for subtask in task.subtasks:
+                if subtask.due_date == date_str:
+                    self.items.append(("subtask", task.id, subtask.id, subtask.text, task.text))
+        
+        self.selected_item_ids = []
+        self.selected_index = 0 if self.items else -1
+    
+    def _get_group_name(self, group_id: Optional[int]) -> str:
+        if group_id is None:
+            return "Sin grupo"
+        group = next((g for g in self.all_groups if g.id == group_id), None)
+        return group.name if group else "Sin grupo"
+    
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label(f"✏️ Editar {self.date_str}", classes="modal-title")
+            yield Label("Selecciona tareas/subtareas para QUITAR la fecha", classes="info-text")
+            yield Container(id="items-list")
+            yield Label("↑↓ Navegar | Espacio: Marcar para quitar | Enter: Aplicar | Esc: Cancelar", classes="hint")
+            with Horizontal(classes="button-row"):
+                yield Button("Quitar fechas", variant="error", id="save")
+                yield Button("Cancelar", variant="default", id="cancel")
+    
+    async def on_mount(self) -> None:
+        await self.refresh_list()
+    
+    async def refresh_list(self) -> None:
+        items_list = self.query_one("#items-list", Container)
+        await items_list.remove_children()
+        
+        if not self.items:
+            await items_list.mount(Label("No hay tareas ni subtareas en este día", classes="empty-msg"))
+            self.selected_index = -1
+            return
+        
+        tasks_items = [item for item in self.items if item[0] == "task"]
+        subtasks_items = [item for item in self.items if item[0] == "subtask"]
+        
+        current_index = 0
+        
+        if tasks_items:
+            await items_list.mount(Static("📋 Tareas:", classes="section-header"))
+            for item_type, task_id, subtask_id, text, parent_text in tasks_items:
+                checked = "☒" if (item_type, task_id, subtask_id) in self.selected_item_ids else "☐"
+                text_display = text[:35] + "..." if len(text) > 35 else text
+                padding = " " * max(1, 50 - len(text_display) - len(parent_text))
+                display_text = f"{checked}  {text_display}{padding}📁 {parent_text}"
+                
+                item = Static(display_text, id=f"item-{current_index}", classes="item")
+                await items_list.mount(item)
+                if (item_type, task_id, subtask_id) in self.selected_item_ids:
+                    item.add_class("checked")
+                if current_index == self.selected_index:
+                    item.add_class("selected")
+                current_index += 1
+        
+        if subtasks_items:
+            await items_list.mount(Static("📝 Subtareas:", classes="section-header"))
+            for item_type, task_id, subtask_id, text, parent_text in subtasks_items:
+                checked = "☒" if (item_type, task_id, subtask_id) in self.selected_item_ids else "☐"
+                text_display = text[:35] + "..." if len(text) > 35 else text
+                parent_display = parent_text[:20] + "..." if len(parent_text) > 20 else parent_text
+                padding = " " * max(1, 40 - len(text_display) - len(parent_display))
+                display_text = f"{checked}  ↳ {text_display}{padding}🔗 {parent_display}"
+                
+                item = Static(display_text, id=f"item-{current_index}", classes="item")
+                await items_list.mount(item)
+                if (item_type, task_id, subtask_id) in self.selected_item_ids:
+                    item.add_class("checked")
+                if current_index == self.selected_index:
+                    item.add_class("selected")
+                current_index += 1
+        
+        self.scroll_to_selected()
+    
+    def scroll_to_selected(self) -> None:
+        if self.selected_index >= 0:
+            try:
+                item = self.query_one(f"#item-{self.selected_index}", Static)
+                item.scroll_visible()
+            except: pass
+    
+    def update_selection(self) -> None:
+        for i in range(len(self.items)):
+            try:
+                item = self.query_one(f"#item-{i}", Static)
+                item.set_class(i == self.selected_index, "selected")
+            except: pass
+        self.scroll_to_selected()
+    
+    def action_move_up(self) -> None:
+        if self.items and self.selected_index > 0:
+            self.selected_index -= 1
+            self.update_selection()
+    
+    def action_move_down(self) -> None:
+        if self.items and self.selected_index < len(self.items) - 1:
+            self.selected_index += 1
+            self.update_selection()
+    
+    def action_toggle_item(self) -> None:
+        if not self.items or self.selected_index < 0:
+            return
+        item_type, task_id, subtask_id, text, parent_text = self.items[self.selected_index]
+        item_id = (item_type, task_id, subtask_id)
+        if item_id in self.selected_item_ids:
+            self.selected_item_ids.remove(item_id)
+        else:
+            self.selected_item_ids.append(item_id)
+        self.call_later(self.refresh_list)
+    
+    def action_save(self) -> None:
+        if not self.selected_item_ids:
+            self.dismiss(None)
+            return
+        
+        task_ids = [task_id for item_type, task_id, subtask_id in self.selected_item_ids if item_type == "task"]
+        subtask_selections = [(task_id, subtask_id) for item_type, task_id, subtask_id in self.selected_item_ids if item_type == "subtask"]
+        
+        self.dismiss({
+            "task_ids": task_ids,
+            "subtask_selections": subtask_selections
+        })
+    
+    @on(Button.Pressed, "#save")
+    def on_save_btn(self) -> None:
+        self.action_save()
+    
+    @on(Button.Pressed, "#cancel")
+    def on_cancel_btn(self) -> None:
+        self.dismiss(None)
+    
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+        
+    def on_key(self, event) -> None:
+        if event.key == "ctrl+s":
+            event.prevent_default()
+            event.stop()
+            self.action_save()
 
 class TodoApp(App):
     CSS = """
@@ -3954,6 +4990,8 @@ class TodoApp(App):
         Binding("c", "toggle_calendar", "Calendario"),
         Binding("i", "today_tasks", "Hoy"),
         Binding("/", "search", "Buscar"),
+        Binding("x", "edit_day", "Editar día"),
+        Binding("X", "clear_day", "Vaciar día"),
         Binding("escape", "handle_escape", show=False),
         Binding("left", "nav_left", show=False),
         Binding("right", "nav_right", show=False),
@@ -4008,10 +5046,13 @@ class TodoApp(App):
         }
         
         self.save_lock = Lock()
-        
+
         self.undo_stack: list[dict] = []
         self.redo_stack: list[dict] = []
         self.max_undo = 50
+
+        self.konami_sequence = []
+        self.konami_code = ["up", "up", "down", "down", "left", "right", "left", "right", "b", "a"]
         
         self.load_data()
     
@@ -4034,7 +5075,7 @@ class TodoApp(App):
                 yield Static("", id="calendar-header")
                 yield Static("", id="calendar-display")
                 yield Static("", id="calendar-day-tasks")
-                yield Static("←→↑↓: Navegar | n/p: Mes | t: Hoy | a: Asignar | Enter: Ver tareas | Esc: Volver", id="calendar-hint")
+                yield Static("←→↑↓: Navegar | n/p: Mes | t: Hoy | a: Asignar | x: Editar día | X: Vaciar día | Enter: Ver | Esc: Volver", id="calendar-hint")
             yield Static("", id="stats")
         yield Footer()
     
@@ -4233,15 +5274,7 @@ class TodoApp(App):
         
         cal = calendar.Calendar(firstweekday=0)
         today = date.today()
-        lines = ["   ".join(DIAS_SEMANA), "─" * 26]
-        
-        legend = (
-            "\n"
-            "[bold green]●[/bold green] Hoy  "
-            "[yellow]●[/yellow] Tareas  "
-            "[#FFA500]●[/#FFA500] Subtareas  "
-            "[#D2B48C]●[/#D2B48C] Ambas"
-        )
+        lines = ["  ".join(DIAS_SEMANA), "─" * 26]
         
         for week in cal.monthdayscalendar(self.cal_year, self.cal_month):
             week_str = ""
@@ -4262,26 +5295,27 @@ class TodoApp(App):
                         week_str += f"[bold cyan][{day:2d}][/bold cyan]"
                     elif current == today:
                         if has_tasks and has_subtasks:
-                            week_str += f"[bold #D2B48C]{day:2d}•[/bold #D2B48C]"
+                            week_str += f"[bold #D2B48C]•{day:2d} [/bold #D2B48C]"
                         elif has_subtasks:
-                            week_str += f"[bold #FFA500]{day:2d}•[/bold #FFA500]"
+                            week_str += f"[bold #FFA500]•{day:2d} [/bold #FFA500]"
                         elif has_tasks:
-                            week_str += f"[bold green]{day:2d}•[/bold green]"
+                            week_str += f"[bold green]•{day:2d} [/bold green]"
                         else:
                             week_str += f"[bold green] {day:2d} [/bold green]"
                     else:
                         if has_tasks and has_subtasks:
-                            week_str += f"[#D2B48C]{day:2d}•[/#D2B48C]"
+                            week_str += f"[#D2B48C]•{day:2d} [/#D2B48C]"
                         elif has_subtasks:
-                            week_str += f"[#FFA500]{day:2d}•[/#FFA500]"
+                            week_str += f"[#FFA500]•{day:2d} [/#FFA500]"
                         elif has_tasks:
-                            week_str += f"[yellow]{day:2d}•[/yellow]"
+                            week_str += f"[yellow]•{day:2d} [/yellow]"
                         else:
                             week_str += f" {day:2d} "
             lines.append(week_str)
         
-        lines.append(legend)
-            
+        lines.append("")
+        lines.append("[bold green]●[/bold green] Hoy  [yellow]●[/yellow] Tareas  [#FFA500]●[/#FFA500] Subtareas  [#D2B48C]●[/#D2B48C] Ambas")
+        
         self.query_one("#calendar-display", Static).update("\n".join(lines))
         
         tasks, subtasks = self._get_tasks_for_date(self.cal_year, self.cal_month, self.cal_day)
@@ -4377,7 +5411,10 @@ class TodoApp(App):
         self.selected_index = max(0, min(self.selected_index, len(ordered) - 1))
         for i, t in enumerate(ordered):
             try:
-                self.query_one(f"#task-{t.id}", TaskWidget).selected = (i == self.selected_index)
+                widget = self.query_one(f"#task-{t.id}", TaskWidget)
+                widget.selected = (i == self.selected_index)
+                if i == self.selected_index:
+                    widget.scroll_visible()
             except: pass
     
     def update_stats(self) -> None:
@@ -4781,7 +5818,37 @@ class TodoApp(App):
         await self.refresh_tabs()
         self.update_stats()
         self.save_data()
-    
+
+    def action_manage_tags(self) -> None:
+        if self.calendar_mode:
+            return
+
+        async def on_result(updated_tags: Optional[list[Tag]]) -> None:
+            if updated_tags is not None:
+                self._save_undo_state()
+
+                old_tag_ids = {t.id for t in self.tags}
+                new_tag_ids = {t.id for t in updated_tags}
+                deleted_tag_ids = old_tag_ids - new_tag_ids
+
+                if deleted_tag_ids:
+                    for task in self.tasks:
+                        task.tags = [tid for tid in task.tags if tid not in deleted_tag_ids]
+                        for subtask in task.subtasks:
+                            if hasattr(subtask, 'tags'):
+                                subtask.tags = [tid for tid in subtask.tags if tid not in deleted_tag_ids]
+
+                self.tags = updated_tags
+                if updated_tags:
+                    self.next_tag_id = max(t.id for t in updated_tags) + 1
+
+                await self.refresh_view()
+                self.update_stats()
+                self.save_data()
+                self.notify("🏷️ Etiquetas actualizadas (Ctrl+Z para deshacer)", severity="information", timeout=2)
+
+        self.push_screen(TagsManagerModal(self.tags, self.next_tag_id), on_result)
+
     def action_manage_comments(self) -> None:
         if not self.subtasks or self.selected_index < 0:
             return
@@ -4902,25 +5969,31 @@ class TodoApp(App):
                 "group_id": t.group_id,
                 "due_date": t.due_date,
                 "comments": [{
-                    "id": c.id, 
-                    "text": c.text, 
-                    "url": c.url, 
-                    "image_path": c.image_path, 
+                    "id": c.id,
+                    "title": c.title,
+                    "description": c.description,
+                    "url": c.url,
+                    "image_path": c.image_path,
+                    "file_path": c.file_path,
                     "created_at": c.created_at
                 } for c in t.comments],
                 "tags": list(t.tags),
                 "priority": t.priority,
                 "subtasks": [{
-                    "id": s.id, 
-                    "text": s.text, 
+                    "id": s.id,
+                    "text": s.text,
                     "done": s.done,
-                    "created_at": s.created_at, 
+                    "created_at": s.created_at,
                     "due_date": s.due_date,
+                    "tags": s.tags if hasattr(s, 'tags') else [],
+                    "priority": s.priority if hasattr(s, 'priority') else 0,
                     "comments": [{
-                        "id": c.id, 
-                        "text": c.text, 
+                        "id": c.id,
+                        "title": c.title,
+                        "description": c.description,
                         "url": c.url,
-                        "image_path": c.image_path, 
+                        "image_path": c.image_path,
+                        "file_path": c.file_path,
                         "created_at": c.created_at
                     } for c in s.comments]
                 } for s in t.subtasks]
@@ -4930,9 +6003,9 @@ class TodoApp(App):
     def _save_undo_state(self) -> None:
         state = self._capture_state()
         self.undo_stack.append(state)
-        
+
         self.redo_stack.clear()
-        
+
         if len(self.undo_stack) > self.max_undo:
             self.undo_stack.pop(0)
 
@@ -4951,30 +6024,36 @@ class TodoApp(App):
         self.tasks = []
         for t in state["tasks"]:
             comments = [Comment(
-                id=c["id"], 
-                text=c["text"], 
-                url=c.get("url"), 
+                id=c["id"],
+                title=c.get("title", c.get("text", "")),
+                description=c.get("description", ""),
+                url=c.get("url"),
                 image_path=c.get("image_path"),
+                file_path=c.get("file_path"),
                 created_at=c.get("created_at", "")
             ) for c in t["comments"]]
             
             subtasks = []
             for s in t.get("subtasks", []):
                 subtask_comments = [Comment(
-                    id=c["id"], 
-                    text=c["text"], 
+                    id=c["id"],
+                    title=c.get("title", c.get("text", "")),
+                    description=c.get("description", ""),
                     url=c.get("url"),
                     image_path=c.get("image_path"),
+                    file_path=c.get("file_path"),
                     created_at=c.get("created_at", "")
                 ) for c in s.get("comments", [])]
                 
                 subtask = Subtask(
-                    id=s["id"], 
-                    text=s["text"], 
+                    id=s["id"],
+                    text=s["text"],
                     done=s.get("done", False),
                     created_at=s.get("created_at", ""),
                     due_date=s.get("due_date"),
-                    comments=subtask_comments
+                    comments=subtask_comments,
+                    tags=s.get("tags", []),
+                    priority=s.get("priority", 0)
                 )
                 subtasks.append(subtask)
             
@@ -4996,42 +6075,42 @@ class TodoApp(App):
         if not self.undo_stack:
             self.notify("⚠️ No hay acciones para deshacer", severity="warning", timeout=2)
             return
-        
+
         current_state = self._capture_state()
         self.redo_stack.append(current_state)
-        
+
         if len(self.redo_stack) > self.max_undo:
             self.redo_stack.pop(0)
-        
+
         previous_state = self.undo_stack.pop()
-        
+
         self._restore_state(previous_state)
-        
+
         await self.refresh_tabs()
         await self.refresh_view()
         self.update_stats()
-        
+
         self.notify(f"↩️ Deshecho (Ctrl+Y para rehacer | {len(self.undo_stack)} deshacer restantes)", severity="information", timeout=2)
     
     async def action_redo(self) -> None:
         if not self.redo_stack:
             self.notify("⚠️ No hay acciones para rehacer", severity="warning", timeout=2)
             return
-        
+
         current_state = self._capture_state()
         self.undo_stack.append(current_state)
-        
+
         if len(self.undo_stack) > self.max_undo:
             self.undo_stack.pop(0)
-        
+
         redo_state = self.redo_stack.pop()
-        
+
         self._restore_state(redo_state)
-        
+
         await self.refresh_tabs()
         await self.refresh_view()
         self.update_stats()
-        
+
         self.notify(f"↪️ Rehecho (Ctrl+Z para deshacer | {len(self.redo_stack)} rehacer restantes)", severity="information", timeout=2)
     
     def save_data(self) -> None:
@@ -5050,22 +6129,27 @@ class TodoApp(App):
                     "created_at": t.created_at,
                     "group_id": t.group_id, 
                     "due_date": t.due_date,
-                    "comments": [{"id": c.id, "text": c.text, "url": c.url, 
-                                "image_path": c.image_path, "created_at": c.created_at} 
+                    "comments": [{"id": c.id, "title": c.title, "description": c.description,
+                                "url": c.url, "image_path": c.image_path, "file_path": c.file_path,
+                                "created_at": c.created_at}
                                 for c in t.comments],
                     "tags": t.tags, 
                     "priority": t.priority,
                     "subtasks": [{
-                        "id": s.id, 
-                        "text": s.text, 
+                        "id": s.id,
+                        "text": s.text,
                         "done": s.done,
-                        "created_at": s.created_at, 
+                        "created_at": s.created_at,
                         "due_date": s.due_date,
+                        "tags": s.tags if hasattr(s, 'tags') else [],
+                        "priority": s.priority if hasattr(s, 'priority') else 0,
                         "comments": [{
-                            "id": c.id, 
-                            "text": c.text, 
+                            "id": c.id,
+                            "title": c.title,
+                            "description": c.description,
                             "url": c.url,
-                            "image_path": c.image_path, 
+                            "image_path": c.image_path,
+                            "file_path": c.file_path,
                             "created_at": c.created_at
                         } for c in s.comments]
                     } for s in t.subtasks]
@@ -5089,28 +6173,33 @@ class TodoApp(App):
                 self.tags = [Tag(id=t["id"], name=t["name"]) for t in data.get("tags", [])]
                 self.tasks = []
                 for t in data.get("tasks", []):
-                    comments = [Comment(id=c["id"], text=c["text"], url=c.get("url"), 
-                                    image_path=c.get("image_path"),
-                                    created_at=c.get("created_at", ""))
+                    comments = [Comment(id=c["id"], title=c.get("title", c.get("text", "")),
+                                    description=c.get("description", ""),
+                                    url=c.get("url"), image_path=c.get("image_path"),
+                                    file_path=c.get("file_path"), created_at=c.get("created_at", ""))
                             for c in t.get("comments", [])]
                     
                     subtasks = []
                     for s in t.get("subtasks", []):
                         subtask_comments = [Comment(
-                            id=c["id"], 
-                            text=c["text"], 
+                            id=c["id"],
+                            title=c.get("title", c.get("text", "")),
+                            description=c.get("description", ""),
                             url=c.get("url"),
                             image_path=c.get("image_path"),
+                            file_path=c.get("file_path"),
                             created_at=c.get("created_at", "")
                         ) for c in s.get("comments", [])]
                         
                         subtask = Subtask(
-                            id=s["id"], 
-                            text=s["text"], 
+                            id=s["id"],
+                            text=s["text"],
                             done=s.get("done", False),
                             created_at=s.get("created_at", ""),
                             due_date=s.get("due_date"),
-                            comments=subtask_comments
+                            comments=subtask_comments,
+                            tags=s.get("tags", []),
+                            priority=s.get("priority", 0)
                         )
                         subtasks.append(subtask)
                     
@@ -5130,7 +6219,114 @@ class TodoApp(App):
         except Exception as e:
             self.tasks, self.groups, self.tags = [], [], []
             self.next_task_id = self.next_group_id = self.next_tag_id = self.next_subtask_id = 1
+    
+    def check_konami_code(self, key: str) -> None:
+        self.konami_sequence.append(key)
         
+        if len(self.konami_sequence) > 10:
+            self.konami_sequence.pop(0)
+        
+        if self.konami_sequence == self.konami_code:
+            self.konami_sequence = []
+            try:
+                webbrowser.open("https://www.yout-ube.com/watch?v=dQw4w9WgXcQ")
+            except:
+                self.notify("🎮 Konami Code detected but couldn't open browser", severity="warning", timeout=3)
+    
+    def action_edit_day(self) -> None:
+        if not self.calendar_mode:
+            return
+        
+        selected_date = f"{self.cal_year:04d}-{self.cal_month:02d}-{self.cal_day:02d}"
+        date_display = f"{self.cal_day}/{self.cal_month}/{self.cal_year}"
+        
+        has_items = any(
+            t.due_date == selected_date or
+            any(st.due_date == selected_date for st in t.subtasks)
+            for t in self.tasks
+        )
+        
+        if not has_items:
+            self.notify("No hay tareas ni subtareas en este día", severity="information", timeout=2)
+            return
+        
+        async def on_result(result: Optional[dict]) -> None:
+            if result:
+                self._save_undo_state()
+                
+                task_ids = result.get("task_ids", [])
+                subtask_selections = result.get("subtask_selections", [])
+                
+                for task in self.tasks:
+                    if task.id in task_ids:
+                        task.due_date = None
+                
+                for task in self.tasks:
+                    for subtask in task.subtasks:
+                        if (task.id, subtask.id) in subtask_selections:
+                            subtask.due_date = None
+                
+                count = len(task_ids) + len(subtask_selections)
+                if count > 0:
+                    self.save_data()
+                    self.refresh_calendar()
+                    self.update_stats()
+                    self.notify(f"🗑️ {count} fecha(s) eliminada(s) (Ctrl+Z para deshacer)", 
+                            severity="information", timeout=2)
+        
+        self.push_screen(EditDayItemsModal(self.tasks, self.groups, selected_date), on_result)
+    
+    def action_clear_day(self) -> None:
+        if not self.calendar_mode:
+            return
+        
+        selected_date = f"{self.cal_year:04d}-{self.cal_month:02d}-{self.cal_day:02d}"
+        date_display = f"{self.cal_day}/{self.cal_month}/{self.cal_year}"
+        
+        task_count = sum(1 for t in self.tasks if t.due_date == selected_date)
+        subtask_count = sum(
+            1 for t in self.tasks 
+            for st in t.subtasks 
+            if st.due_date == selected_date
+        )
+        total_count = task_count + subtask_count
+        
+        if total_count == 0:
+            self.notify("No hay tareas ni subtareas en este día", severity="information", timeout=2)
+            return
+        
+        async def on_confirm(yes: bool) -> None:
+            if yes:
+                self._save_undo_state()
+                
+                for task in self.tasks:
+                    if task.due_date == selected_date:
+                        task.due_date = None
+                    
+                    for subtask in task.subtasks:
+                        if subtask.due_date == selected_date:
+                            subtask.due_date = None
+                
+                self.save_data()
+                self.refresh_calendar()
+                self.update_stats()
+                self.notify(f"🗑️ {total_count} fecha(s) eliminada(s) del {date_display} (Ctrl+Z para deshacer)", 
+                        severity="information", timeout=2)
+        
+        self.push_screen(
+            ConfirmModal(f"¿Vaciar el {date_display}?\n({task_count} tareas, {subtask_count} subtareas)"),
+            on_confirm
+        )
+    
+    def on_key(self, event) -> None:
+        key = event.key
+        if key in ["up", "down", "left", "right"]:
+            self.check_konami_code(key)
+        elif key == "b":
+            self.check_konami_code("b")
+        elif key == "a":
+            self.check_konami_code("a")
+    
 def main():
     TodoApp().run()
 
