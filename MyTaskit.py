@@ -1907,6 +1907,7 @@ class CanvasEditorModal(ModalScreen[Optional[dict]]):
         self.current_tool = "draw"
         self.current_color = "[white]█[/white]"
         self.is_drawing = False
+        # Cada color se guarda como un solo carácter, se duplica al renderizar
         self.color_map = {
             "white": "[white]█[/white]",
             "red": "[red]█[/red]",
@@ -1957,9 +1958,10 @@ class CanvasEditorModal(ModalScreen[Optional[dict]]):
             line = ""
             for cell in row:
                 if cell == " ":
-                    line += " "
+                    line += "  "  # Dos espacios para hacer píxeles cuadrados
                 else:
-                    line += cell
+                    # Duplicar el carácter para hacer píxeles cuadrados
+                    line += cell + cell
             lines.append(line)
 
         canvas_text = "\n".join(lines)
@@ -2034,11 +2036,14 @@ class CanvasEditorModal(ModalScreen[Optional[dict]]):
         rel_x = event.screen_x - region.x
         rel_y = event.screen_y - region.y
 
-        if 0 <= rel_y < self.canvas_data.height and 0 <= rel_x < self.canvas_data.width:
+        # Dividir por 2 porque cada píxel ocupa 2 caracteres de ancho
+        pixel_x = rel_x // 2
+
+        if 0 <= rel_y < self.canvas_data.height and 0 <= pixel_x < self.canvas_data.width:
             if self.current_tool == "draw":
-                self.canvas_data.grid[rel_y][rel_x] = self.current_color
+                self.canvas_data.grid[rel_y][pixel_x] = self.current_color
             elif self.current_tool == "erase":
-                self.canvas_data.grid[rel_y][rel_x] = " "
+                self.canvas_data.grid[rel_y][pixel_x] = " "
 
             self.render_canvas()
 
